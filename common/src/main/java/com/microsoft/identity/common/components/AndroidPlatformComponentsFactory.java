@@ -33,8 +33,6 @@ import com.microsoft.identity.common.internal.net.cache.HttpCache;
 import com.microsoft.identity.common.internal.platform.AndroidBroadcaster;
 import com.microsoft.identity.common.internal.platform.AndroidDeviceMetadata;
 import com.microsoft.identity.common.internal.platform.AndroidPlatformUtil;
-import com.microsoft.identity.common.internal.providers.oauth2.AndroidTaskStateGenerator;
-import com.microsoft.identity.common.internal.ui.AndroidAuthorizationStrategyFactory;
 import com.microsoft.identity.common.internal.ui.browser.AndroidBrowserSelector;
 import com.microsoft.identity.common.internal.util.WorkProfileUtil;
 import com.microsoft.identity.common.java.WarningType;
@@ -98,18 +96,6 @@ public class AndroidPlatformComponentsFactory {
         return create(context, null, null);
     }
 
-    /**
-     * Creates an {@link IPlatformComponents} object from an {@link Activity} and, optionally, a {@link Fragment}.
-     *
-     * @param activity an activity where an interactive session will be attached to.
-     * @param fragment a fragment where an interactive session will be attached to.
-     **/
-    public static IPlatformComponents createFromActivity(@NonNull final Activity activity,
-                                                         @Nullable final Fragment fragment) {
-
-        return create(activity.getApplicationContext(), activity, fragment);
-    }
-
     @SuppressWarnings(WarningType.rawtype_warning)
     private static IPlatformComponents create(@NonNull final Context context,
                                               @Nullable final Activity activity,
@@ -139,16 +125,5 @@ public class AndroidPlatformComponentsFactory {
                 .platformUtil(new AndroidPlatformUtil(context, activity))
                 .httpClientWrapper(new DefaultHttpClientWrapper())
                 .browserSelector(new AndroidBrowserSelector(context));
-
-        if (activity != null){
-            builder.authorizationStrategyFactory(
-                            AndroidAuthorizationStrategyFactory.builder()
-                                    .context(activity.getApplicationContext())
-                                    .activity(activity)
-                                    .fragment(fragment)
-                                    .browserSelector(new AndroidBrowserSelector(context))
-                                    .build())
-                    .stateGenerator(new AndroidTaskStateGenerator(activity.getTaskId()));
-        }
     }
 }

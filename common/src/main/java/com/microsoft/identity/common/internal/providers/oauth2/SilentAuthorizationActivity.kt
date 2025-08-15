@@ -64,10 +64,6 @@ class SilentAuthorizationActivity : AuthorizationActivity() {
             .commitNow()
     }
 
-    override fun getThemeResId(): Int {
-        return R.style.TransparentActivityTheme
-    }
-
     /**
      * Enables edge to edge setting for silent authorization activity.
      */
