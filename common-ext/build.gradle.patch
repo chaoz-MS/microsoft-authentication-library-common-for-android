@@ -1,0 +1,111 @@
+diff --git a/common/build.gradle b/common-ext/build.gradle
+index 584eb2dcd..2881a2d27 100644
+--- a/common/build.gradle
++++ b/common-ext/build.gradle
+@@ -97,9 +97,6 @@ boolean newBrokerDiscoveryEnabledFlag = project.hasProperty("newBrokerDiscoveryE
+ boolean trustDebugBrokerFlag = project.hasProperty("trustDebugBrokerFlag")
+ boolean bypassRedirectUriCheck = project.hasProperty("bypassRedirectUriCheck")
+ 
+-def robolectricRepoUsername = System.getenv("ENV_VSTS_MVN_CRED_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_CRED_USERNAME") : project.findProperty("vstsUsername")
+-def robolectricRepoPassword = System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
+-
+ android {
+     compileSdk rootProject.ext.compileSdkVersion
+     defaultConfig {
+@@ -109,7 +106,7 @@ android {
+         targetSdkVersion rootProject.ext.targetSdkVersion
+         versionCode getAppVersionCode()
+         versionName getAppVersionName()
+-        project.archivesBaseName = "common-base"
++        project.archivesBaseName = "common-ext"
+         project.version = android.defaultConfig.versionName
+         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+         //Languages Common supports.
+@@ -117,15 +114,12 @@ android {
+                 "eu", "fi", "fr", "gl", "he", "hi", "hr", "hu", "in", "it", "iw", "ja",
+                 "kk", "ko", "lt", "lv", "ms", "nb", "nl", "pl", "pt-rBR", "pt-rPT", "ro",
+                 "ru", "sk", "sl", "sr", "sv", "th", "tr", "uk", "vi", "zh-rCN", "zh-rTW"
+-        buildConfigField("boolean", "newBrokerDiscoveryEnabledFlag", "$newBrokerDiscoveryEnabledFlag")
+-        buildConfigField("boolean", "trustDebugBrokerFlag", "$trustDebugBrokerFlag")
+-        buildConfigField("boolean", "bypassRedirectUriCheck", "$bypassRedirectUriCheck")
+     }
+-    //aidl is being set to true since aidl only generated with this set
++
+     buildFeatures {
+-        buildConfig = true
+-        aidl = true
++        buildConfig = false
+     }
++
+     buildTypes {
+         debug {
+             testCoverageEnabled enableCodeCoverage
+@@ -160,18 +154,6 @@ android {
+         disable 'RtlHardcoded'
+     }
+ 
+-    testOptions {
+-        unitTests.all {
+-            exclude 'com/microsoft/identity/common/integration'
+-            exclude 'com/microsoft/identity/common/ropc'
+-            if (robolectricRepoUsername?.toString()?.trim() && robolectricRepoPassword?.toString()?.trim()) {
+-                it.systemProperty("robolectric.dependency.repo.url", "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1")
+-                it.systemProperty("robolectric.dependency.repo.username", robolectricRepoUsername)
+-                it.systemProperty("robolectric.dependency.repo.password", robolectricRepoPassword)
+-            }
+-        }
+-    }
+-
+     flavorDimensions "main"
+ 
+     productFlavors {
+@@ -191,7 +173,6 @@ android {
+     sourceSets {
+         main {
+             manifest.srcFile 'src/main/AndroidManifest.xml'
+-            aidl.srcDirs = ['src/main/aidl']
+ 
+             // Also load source from common-java
+             java.srcDirs = ['src/main/java', 'src/main/kotlin']
+@@ -207,7 +188,7 @@ android {
+ }
+ 
+ dependencies {
+-    implementation "androidx.webkit:webkit:$rootProject.ext.webkitVersion"
++    api project(':common')
+     testImplementation project(path: ':testutils')
+ 
+     localApi(project(":common4j")) {
+@@ -261,7 +242,7 @@ dependencies {
+     testImplementation "junit:junit:$rootProject.ext.junitVersion"
+     testImplementation "org.mockito:mockito-core:$rootProject.ext.mockitoCoreVersion"
+     testImplementation "org.mockito.kotlin:mockito-kotlin:$rootProject.ext.mockitoKotlinVersion"
+-    testImplementation "io.mockk:mockk:1.13.10"
++    testImplementation "io.mockk:mockk:1.11.0"
+ 
+     testImplementation "org.powermock:powermock-module-junit4:$rootProject.ext.powerMockVersion"
+     testImplementation "org.powermock:powermock-module-junit4-rule:$rootProject.ext.powerMockVersion"
+@@ -294,7 +275,7 @@ android.libraryVariants.all { variant ->
+     task("${variant.name}Javadoc", type: Javadoc, dependsOn: "assemble${variant.name.capitalize()}") {
+         source = variant.javaCompileProvider.get().source
+ 
+-        title = "Microsoft Identity Android Common"
++        title = "Microsoft Identity Android Common Ext"
+ 
+         // First add all of your dependencies to the classpath, then add the android jars
+         doFirst { classpath += files(variant.javaCompiler.classpath.files) }
+@@ -375,12 +356,12 @@ afterEvaluate {
+             distRelease(MavenPublication) {
+                 from components.distRelease
+                 groupId 'com.microsoft.identity'
+-                artifactId 'common-base'
++                artifactId 'common-ext'
+                 //Edit the 'version' here for VSTS RC build
+                 version = project.version
+ 
+                 pom {
+-                    name = 'common-base'
++                    name = 'common-ext'
+                     description = 'This library contains code shared between the Active Directory ' +
+                             'Authentication Library (ADAL) for Android and the Microsoft ' +
+                             'Authentication Library (MSAL) for Android. This library ' +
