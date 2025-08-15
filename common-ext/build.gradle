@@ -1,0 +1,573 @@
+plugins {
+    id 'com.microsoft.identity.buildsystem' version '0.2.5'
+    id 'com.android.library'
+    id 'pmd'
+    id 'checkstyle'
+    id 'maven-publish'
+    id 'kotlin-android'
+    id 'jacoco'
+
+    // Test retries
+    id 'org.gradle.test-retry' version '1.5.6'
+    id 'org.owasp.dependencycheck' version '12.2.2'
+}
+
+apply from: '../versioning/version_tasks.gradle'
+
+buildSystem {
+    desugar = false
+}
+
+def enableCodeCoverage = false
+
+if (project.hasProperty("codeCoverageEnabled")) {
+    enableCodeCoverage = codeCoverageEnabled.toBoolean()
+}
+
+codeCoverageReport {
+    coverage.enabled = enableCodeCoverage
+}
+
+jacoco {
+    toolVersion = "0.8.10"
+}
+
+// https://blog.gradle.org/gradle-flaky-test-retry-plugin
+tasks.withType(Test) {
+    jacoco {
+        includeNoLocationClasses = true // Required for Robolectric
+        excludes = ['jdk.internal.*']
+    }
+    retry {
+        // The maximum number of test failures that are allowed before retrying is disabled.
+        maxRetries = 2
+        // The maximum number of times to retry an individual test.
+        maxFailures = 10
+        // Controls whether tests that initially fail and then pass on retry should fail the task.
+        failOnPassedAfterRetry = false
+    }
+}
+
+// Registers a JaCoCo XML+HTML coverage report task for a given build variant's unit tests.
+// PR validation builds the 'local' flavor, so the PR checks invoke jacocoTestReport
+// (localDebug) and its behaviour is unchanged. The weekly release pipeline builds the
+// 'dist' flavor and invokes jacocoDistTestReport (distDebug), which reuses the .exec
+// produced by distDebug<Module>UnitTestCoverageReport rather than re-running tests on a
+// variant the weekly infrastructure doesn't build.
+def registerJacocoXmlReport = { String taskName, String variant ->
+    def variantCap = variant.capitalize()
+    tasks.register(taskName, JacocoReport) {
+        dependsOn "test${variantCap}UnitTest" // Run Robolectric tests first
+
+        reports {
+            xml.required = true
+            html.required = true
+        }
+
+        def fileFilter = [
+                '**/R.class', '**/R$*.class', '**/BuildConfig.*',
+                '**/Manifest*.*', '**/*Test*.*',
+                'android/**/*.*', 'com/microsoft/aad/adal/**'
+        ]
+
+        def kotlinClasses = fileTree(
+                dir: "$buildDir/tmp/kotlin-classes/${variant}",
+                excludes: fileFilter
+        )
+
+        def javaClasses = fileTree(
+                dir: "$buildDir/intermediates/javac/${variant}/compile${variantCap}JavaWithJavac/classes",
+                excludes: fileFilter
+        )
+
+        sourceDirectories.setFrom(files([
+                "$projectDir/src/main/java",
+                "$projectDir/src/main/kotlin"
+        ]))
+        classDirectories.setFrom(files([kotlinClasses, javaClasses]))
+        executionData.setFrom(fileTree(
+                dir: buildDir,
+                includes: [
+                        "jacoco/test${variantCap}UnitTest.exec".toString(),
+                        "outputs/unit_test_code_coverage/${variant}UnitTest/test${variantCap}UnitTest.exec".toString()
+                ]
+        ))
+
+        // Fail fast if no execution data is present (e.g. tests weren't run, or the
+        // build was invoked without -PcodeCoverageEnabled=true). Without this guard
+        // JacocoReport still emits a valid XML reporting 0% coverage, which would be
+        // silently published as a wrong weekly coverage number instead of failing loudly.
+        doFirst {
+            assert executionData.files.any { it.exists() } :
+                    "No JaCoCo .exec execution data found for ${variant}; " +
+                    "the '${taskName}' report would be a misleading 0%. Ensure the " +
+                    "test${variantCap}UnitTest task ran with coverage enabled."
+        }
+    }
+}
+
+registerJacocoXmlReport("jacocoTestReport", "localDebug")     // PR validation (local flavor)
+registerJacocoXmlReport("jacocoDistTestReport", "distDebug")  // weekly release (dist flavor)
+
+// In dev, we want to keep the dependencies(common4j, broker4j, common) to 1.0.+ to be able to be consumed by daily dev pipeline.
+// In release/*, we change these to specific versions being consumed.
+def common4jVersion = "25.0.0"
+if (project.hasProperty("distCommon4jVersion") && project.distCommon4jVersion != '') {
+    common4jVersion = project.distCommon4jVersion
+}
+
+boolean newBrokerDiscoveryEnabledFlag = project.hasProperty("newBrokerDiscoveryEnabledFlag")
+boolean trustDebugBrokerFlag = project.hasProperty("trustDebugBrokerFlag")
+boolean bypassRedirectUriCheck = project.hasProperty("bypassRedirectUriCheck")
+
+android {
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        namespace 'com.microsoft.identity.common'
+        multiDexEnabled true
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode getAppVersionCode()
+        versionName getAppVersionName()
+        project.archivesBaseName = "common-ext"
+        project.version = android.defaultConfig.versionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        //Languages Common supports.
+        resConfigs "en", "ar", "b+sr+Latn", "bg", "ca", "cs", "da", "de", "el", "es", "et",
+                "eu", "fi", "fr", "gl", "he", "hi", "hr", "hu", "in", "it", "iw", "ja",
+                "kk", "ko", "lt", "lv", "ms", "nb", "nl", "pl", "pt-rBR", "pt-rPT", "ro",
+                "ru", "sk", "sl", "sr", "sv", "th", "tr", "uk", "vi", "zh-rCN", "zh-rTW"
+    }
+
+    buildFeatures {
+        buildConfig = false
+    }
+
+    buildTypes {
+        debug {
+            testCoverageEnabled enableCodeCoverage
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            debuggable false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            consumerProguardFiles 'consumer-rules.pro'
+        }
+    }
+    //Upgrading to Java 8 in order to use YubiKit SDK
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+        // Pinned to 1.9 so published metadata stays readable by consumers still on Kotlin 1.8.
+        languageVersion = "1.9"
+        apiVersion = "1.9"
+    }
+
+    lintOptions {
+        abortOnError true
+        disable 'MissingPermission'
+        disable 'LongLogTag'
+        disable 'DefaultLocale'
+        disable 'UnusedResources'
+        disable 'GradleDependency'
+        disable 'GradleOverrides'
+        disable 'OldTargetApi'
+        disable 'RtlHardcoded'
+    }
+
+    flavorDimensions "main"
+
+    productFlavors {
+        // The 'local' productFlavor sources common4j from mavenLocal and is intended to be used
+        // during development.
+        local {
+            dimension "main"
+        }
+
+        // The 'dist' productFlavor sources common from a central repository and is intended
+        // to be used for releases.
+        dist {
+            dimension "main"
+        }
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'src/main/AndroidManifest.xml'
+
+            // Also load source from common-java
+            java.srcDirs = ['src/main/java', 'src/main/kotlin']
+            res.srcDirs = ['src/main/res']
+        }
+    }
+
+    libraryVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "${archivesBaseName}-${version}.aar"
+        }
+    }
+}
+
+dependencies {
+    api project(':common')
+    testImplementation project(path: ':testutils')
+
+    localApi(project(":common4j")) {
+        transitive = false
+    }
+
+    distApi("com.microsoft.identity:common4j:${common4jVersion}") {
+        transitive = false
+    }
+
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlinVersion"
+    testImplementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlinVersion"
+    androidTestImplementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlinVersion"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:$rootProject.ext.kotlinXCoroutinesVersion"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:$rootProject.ext.lifecycleKtxVersion"
+
+    implementation "androidx.datastore:datastore-preferences:$rootProject.ext.jetpackDataStoreVersion"
+
+    implementation(group: 'com.microsoft.device.display', name: 'display-mask', version: '0.3.0')
+
+    implementation 'org.apache.httpcomponents.core5:httpcore5:5.4.3'
+    implementation "com.nimbusds:nimbus-jose-jwt:$rootProject.ext.nimbusVersion"
+    implementation "androidx.activity:activity:1.8.2"
+    implementation "androidx.appcompat:appcompat:$rootProject.ext.appCompatVersion"
+    implementation "com.google.code.gson:gson:$rootProject.ext.gsonVersion"
+    implementation "com.squareup.moshi:moshi:$rootProject.ext.moshiVersion"
+    implementation "com.squareup.moshi:moshi-adapters:$rootProject.ext.moshiAdaptersVersion"
+    implementation "androidx.browser:browser:$rootProject.ext.browserVersion"
+    implementation "androidx.core:core:$rootProject.ext.androidxCoreVersion"
+    implementation "androidx.constraintlayout:constraintlayout:$rootProject.ext.constraintLayoutVersion"
+    //For Executive Order work
+    implementation "com.yubico.yubikit:android:$rootProject.ext.yubikitAndroidVersion"
+    implementation "com.yubico.yubikit:piv:$rootProject.ext.yubikitPivVersion"
+    //For passkeys
+    implementation "androidx.credentials:credentials:$rootProject.ext.AndroidCredentialsVersion"
+    //needed for credentials support from play services, for devices running
+    implementation "androidx.credentials:credentials-play-services-auth:$rootProject.ext.AndroidCredentialsVersion"
+    implementation "com.google.android.gms:play-services-fido:$rootProject.ext.LegacyFidoApiVersion"
+    implementation "com.google.android.libraries.identity.googleid:googleid:$rootProject.ext.GoogleIdVersion"
+    implementation "com.github.stephenc.jcip:jcip-annotations:$rootProject.ext.jcipAnnotationVersion"
+
+    compileOnly "com.github.spotbugs:spotbugs-annotations:$rootProject.ext.spotBugsAnnotationVersion"
+
+    compileOnly "org.projectlombok:lombok:$rootProject.ext.lombokVersion"
+    annotationProcessor "org.projectlombok:lombok:$rootProject.ext.lombokVersion"
+
+    // Test dependencies
+    // Needed to resolve JSONObject inside of non-instrumented tests
+    testImplementation "org.json:json:$rootProject.ext.jsonVersion"
+    testImplementation "org.skyscreamer:jsonassert:$rootProject.ext.jsonAssertVersion"
+    testImplementation "junit:junit:$rootProject.ext.junitVersion"
+    testImplementation "org.mockito:mockito-core:$rootProject.ext.mockitoCoreVersion"
+    testImplementation "org.mockito.kotlin:mockito-kotlin:$rootProject.ext.mockitoKotlinVersion"
+    testImplementation "io.mockk:mockk:1.11.0"
+
+    testImplementation "org.powermock:powermock-module-junit4:$rootProject.ext.powerMockVersion"
+    testImplementation "org.powermock:powermock-module-junit4-rule:$rootProject.ext.powerMockVersion"
+    testImplementation "org.powermock:powermock-api-mockito2:$rootProject.ext.powerMockVersion"
+    testImplementation "org.powermock:powermock-classloading-xstream:$rootProject.ext.powerMockVersion"
+    testImplementation "org.robolectric:robolectric:$rootProject.ext.robolectricVersion"
+    testImplementation "androidx.test:core:$rootProject.ext.androidxTestCoreVersion"
+    testImplementation project(":LabApiUtilities")
+
+    testImplementation(testFixtures(project(":common4j")))
+    testImplementation "androidx.lifecycle:lifecycle-runtime-testing:$rootProject.ext.lifecycleKtxVersion"
+
+    testCompileOnly "org.projectlombok:lombok:$rootProject.ext.lombokVersion"
+    testAnnotationProcessor "org.projectlombok:lombok:$rootProject.ext.lombokVersion"
+
+    // Instrumented dependencies
+    // testutils is pulled in for FlakyTestRetryRule + @RetryFlakyTest (retrying flaky
+    // instrumented tests; the org.gradle.test-retry plugin only covers JVM/Robolectric unit tests).
+    // NOTE: transitive = false does NOT trim testutils down to just the rule classes — all of
+    // testutils' own classes remain on the androidTest classpath. It only excludes testutils'
+    // transitive dependencies (gson, nimbus, robolectric, etc.) so they don't leak onto the
+    // instrumented classpath. Today common's androidTest suite consumes testutils solely for the
+    // retry rule; if it starts using other testutils helpers whose deps are excluded here, those
+    // will fail at runtime (NoClassDefFoundError) and this exclusion will need revisiting.
+    androidTestImplementation(project(path: ':testutils')) {
+        transitive = false
+    }
+    androidTestImplementation "androidx.test.ext:junit:$rootProject.ext.androidxJunitVersion"
+    androidTestImplementation "org.mockito:mockito-android:$rootProject.ext.mockitoAndroidVersion"
+    androidTestImplementation("androidx.test.espresso:espresso-core:$rootProject.ext.espressoCoreVersion", {
+        exclude group: 'com.android.support', module: 'support-annotations'
+    })
+
+    implementation "io.opentelemetry:opentelemetry-api:$rootProject.ext.openTelemetryVersion"
+    implementation("io.opentelemetry:opentelemetry-extension-kotlin:$rootProject.ext.openTelemetryExtensionKotlinVersion")
+    implementation "androidx.fragment:fragment:1.3.2"
+}
+
+// Create tasks to generate javadoc
+android.libraryVariants.all { variant ->
+    task("${variant.name}Javadoc", type: Javadoc, dependsOn: "assemble${variant.name.capitalize()}") {
+        source = variant.javaCompileProvider.get().source
+
+        title = "Microsoft Identity Android Common Ext"
+
+        // First add all of your dependencies to the classpath, then add the android jars
+        doFirst { classpath += files(variant.javaCompiler.classpath.files) }
+        classpath += files(android.getBootClasspath())
+
+        options.memberLevel = JavadocMemberLevel.PUBLIC
+        options.addBooleanOption('Xdoclint:none', true)
+
+        // We're excluding these generated files
+        exclude '**/R.java'
+    }
+}
+
+// Create tasks to generate javadoc jar
+android.libraryVariants.all { variant ->
+    task("${variant.name}JavadocJar", type: Jar, dependsOn: "${variant.name}Javadoc") {
+        archiveClassifier.set('javadoc')
+        from tasks["${variant.name}Javadoc"].destinationDir
+    }
+}
+
+android.libraryVariants.all { variant ->
+    tasks.named("assemble${variant.name.capitalize()}").configure {
+        doFirst {
+            println("Assembling variant: ${variant.name} for ${project.name}")
+        }
+    }
+}
+
+
+tasks.register('sourcesJar', Jar) {
+    from android.sourceSets.main.java.srcDirs
+    archiveClassifier.set('sources')
+    destinationDirectory = reporting.file("$project.buildDir/outputs/jar/")
+}
+
+def configDir = new File(buildscript.sourceFile.parentFile.parentFile, 'config')
+ext.checkstyleConfigDir = "$configDir/checkstyle"
+
+checkstyle {
+    ignoreFailures = false
+    reportsDir = file("$project.buildDir/outputs/")
+}
+
+tasks.register('checkstyle', Checkstyle) {
+    configFile file("${project.rootDir}/config/checkstyle/checkstyle.xml")
+
+    configProperties.checkstyleConfigDir = checkstyleConfigDir
+    configProperties.checkstyleSuppressionsPath = file("${project.rootDir}/config/checkstyle/suppressions.xml").absolutePath
+    source 'src'
+    include '**/*.java'
+    exclude '**/gen/**'
+    classpath = files()
+}
+
+pmd {
+    ignoreFailures = false
+    reportsDir = file("$project.buildDir/outputs/")
+}
+
+tasks.register('pmd', Pmd) {
+    description 'Run pmd'
+    group 'verification'
+
+    ruleSets = ["java-basic", "java-braces", "java-strings", "java-unusedcode"]
+    source = fileTree('src/main/java')
+
+    reports {
+        xml.required = false
+        html.required = true
+    }
+}
+// For publishing to the remote maven repo.
+afterEvaluate {
+
+    publishing {
+        publications {
+            distRelease(MavenPublication) {
+                from components.distRelease
+                groupId 'com.microsoft.identity'
+                artifactId 'common-ext'
+                //Edit the 'version' here for VSTS RC build
+                version = project.version
+
+                pom {
+                    name = 'common-ext'
+                    description = 'This library contains code shared between the Active Directory ' +
+                            'Authentication Library (ADAL) for Android and the Microsoft ' +
+                            'Authentication Library (MSAL) for Android. This library ' +
+                            'includes only internal classes and is NOT part of the ' +
+                            'public API'
+                    url = 'https://github.com/wutiantong/microsoft-authentication-library-common-for-android'
+                    developers {
+                        developer {
+                            id = 'microsoft'
+                            name = 'Microsoft'
+                        }
+                    }
+                    licenses {
+                        license {
+                            name = 'MIT License'
+                        }
+                    }
+                    inceptionYear = '2017'
+                    scm {
+                        url = 'https://github.com/wutiantong/microsoft-authentication-library-common-for-android/tree/edge-mod-release/21.4.0'
+                    }
+                    properties = [
+                            branch : 'edge-mod-release/21.4.0',
+                            version: project.version
+                    ]
+                }
+            }
+        }
+
+        // Repositories to which Gradle can publish artifacts
+        repositories {
+            maven {
+                name "AndroidLibraryCenter"
+                url "https://microsoft.pkgs.visualstudio.com/Edge/_packaging/AndroidLibraryCenter/maven/v1"
+                credentials {
+                    username project.vstsUsername
+                    password project.vstsMavenAccessToken
+                }
+            }
+        }
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name.contains("assemble")) {
+        task.dependsOn 'pmd'
+    }
+
+    if (task.name == 'assembleDebug' || task.name == 'assembleRelease') {
+        task.dependsOn 'lint', 'sourcesJar', 'pmd'
+    }
+    if (task.name == 'assembleDistRelease') {
+        task.dependsOn 'sourcesJar'
+    }
+    // Due to gradle version increase, we need to be more explicit in the dependency chain
+    // More information can be found here: https://docs.gradle.org/8.1/userguide/validation_problems.html#implicit_dependency
+    if (task.name == "publishDistDebugPublicationToAndroidLibraryCenterRepository") {
+        task.mustRunAfter 'generatePomFileForDistReleasePublication', 'bundleDistReleaseAar'
+    }
+    if (task.name == "publishDistReleasePublicationToAndroidLibraryCenterRepository") {
+        task.dependsOn 'bundleDistReleaseAar'
+    }
+    if (task.name == "generateMetadataFileForDistDebugPublication") {
+        task.mustRunAfter 'bundleDistDebugAar'
+    }
+    if (task.name == "generateMetadataFileForDistReleasePublication") {
+        task.dependsOn 'bundleDistReleaseAar'
+    }
+}
+
+// This is used to generate the pom file for publishing to external maven in maven-release-jobs.yml.
+// Need to distinguish between distDebug and distRelease for the destination
+tasks.withType(GenerateMavenPom).all {
+    def functionName = name.toLowerCase()
+    if (functionName.contains("distdebug")) {
+        destination = layout.buildDirectory.file("poms/${project.name}-debug-${project.version}.pom").get().asFile
+    } else if (functionName.contains("distrelease")) {
+        destination = layout.buildDirectory.file("poms/${project.name}-${project.version}.pom").get().asFile
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OWASP Dependency-Check (plugin applied in `plugins { }` at top of file)
+// ---------------------------------------------------------------------------
+// Wires `dependencyCheckAnalyze` into `check` and configures the NVD scanner
+// for an Android library. Tunables (override on CLI):
+//   -PdependencyCheckFailOnCvss=11      (default 7.0; use 11 to never fail the build)
+//   -PdependencyCheckFormats=HTML,JSON,SARIF
+//
+// NVD API key — required, no hardcoded fallback (this file ships in a public repo).
+// Resolution order (first wins): -PnvdApiKey  →  gradle.properties: nvdApiKey  →  env NVD_API_KEY
+// Missing key triggers fail-fast in the taskGraph hook below (avoids confusing
+// 429 / NoDataException cascade from inside the plugin).
+def dependencyCheckAutoUpdate = (project.findProperty("dependencyCheckAutoUpdate") ?: "false").toBoolean()
+def dependencyCheckFailOnCvss = (project.findProperty("dependencyCheckFailOnCvss") ?: "7.0").toFloat()
+def dependencyCheckFormats = (project.findProperty("dependencyCheckFormats")?.toString()?.split(",")*.trim()
+        ?: ["HTML", "JSON"])
+def dependencyCheckSuppressionFile = file("${projectDir}/../config/owasp/dependency-check-suppressions.xml")
+def __nvdApiKey = (project.findProperty("nvdApiKey") ?: System.getenv("NVD_API_KEY"))?.toString()?.trim()
+
+dependencyCheck {
+    autoUpdate = dependencyCheckAutoUpdate
+    failBuildOnCVSS = dependencyCheckFailOnCvss
+    formats = dependencyCheckFormats
+    outputDirectory = layout.buildDirectory.dir("reports/dependency-check").get().asFile.absolutePath
+
+    // NOTE on API shape: dependency-check-gradle 12.x @Deprecated the closure forms
+    // `nvd { ... }` and `analyzers { ... }`. Use flat `nvd.<prop>` / `analyzers.<prop>`.
+    // `cve.validForHours` / `cveValidForHours` are NOT exposed in 12.x — caching is
+    // handled internally by the plugin's H2 DB at ~/.gradle/dependency-check-data/.
+    if (__nvdApiKey) {
+        nvd.apiKey = __nvdApiKey
+    }
+    nvd.delay = 2000          // ms between calls; keyed throughput is ~50 req/30s
+    nvd.maxRetryCount = 10
+
+    // Only scan shipped runtime classpaths (skip test/androidTest for speed + signal).
+    scanConfigurations = [
+            "distReleaseRuntimeClasspath", "distDebugRuntimeClasspath",
+            "localReleaseRuntimeClasspath", "localDebugRuntimeClasspath"
+    ]
+
+    if (dependencyCheckSuppressionFile.exists()) {
+        suppressionFile = dependencyCheckSuppressionFile.absolutePath
+    }
+
+    // Disabled analyzers — not relevant for an Android/Java library:
+    analyzers.assemblyEnabled = false        // .NET assemblies
+    analyzers.nuspecEnabled = false          // NuGet
+    analyzers.nodePackage.enabled = false    // npm
+    analyzers.nodeAudit.enabled = false      // npm audit
+    analyzers.ossIndex.enabled = false       // requires Sonatype Guide token
+
+    // ArchiveAnalyzer disabled: crashes with NoSuchMethodError on ZipFile.builder()
+    // because AGP's buildscript classpath shadows commons-compress < 1.26 into the
+    // plugin classloader. Maven GAV-based detection (JarAnalyzer) still covers all
+    // our AARs, so we lose no CVE coverage.
+    analyzers.archiveEnabled = false
+}
+
+// Fail fast on missing NVD key only when the scan is actually in the task graph,
+// so IDE sync / `./gradlew tasks` aren't broken.
+gradle.taskGraph.whenReady { graph ->
+    if (!__nvdApiKey && graph.hasTask(project.tasks.named('dependencyCheckAnalyze').get())) {
+        throw new GradleException(
+                "OWASP dependency-check requires an NVD API key.\n" +
+                "Provide via: -PnvdApiKey=<key>  |  gradle.properties: nvdApiKey=<key>  |  env NVD_API_KEY=<key>\n" +
+                "Key lives in the Android Auth team KeyVault; CI injects it from there.")
+    }
+}
+
+def dependenciesSizeInMb = project.hasProperty("dependenciesSizeMb") ? project.dependenciesSizeMb : "16"
+String configToCheck = project.hasProperty("dependenciesSizeCheckConfig") ? project.dependenciesSizeCheckConfig : "distReleaseRuntimeClasspath"
+tasks.register("dependenciesSizeCheck") {
+    doLast() {
+        def size = configurations.getByName(configToCheck).collect { it.length() / (1024 * 1024) }.sum()
+        def formatStr = "%,10.2f"
+        def out = new StringBuffer()
+        out << 'Total dependencies size:'.padRight(65)
+        out << "${String.format(formatStr, size)} Mb\n\n"
+        configurations.getByName(configToCheck).sort { -it.length() }
+                .each {
+                    out << "${it.name}".padRight(65)
+                    out << "${String.format(formatStr, (it.length() / 1024))} kb\n"
+                }
+        println(out)
+        if (size > dependenciesSizeInMb.toDouble()) {
+            throw new GradleException("Total dependencies size is $size Mb. " +
+                    "It should be less than ${dependenciesSizeInMb} Mb")
+        }
+    }
+}

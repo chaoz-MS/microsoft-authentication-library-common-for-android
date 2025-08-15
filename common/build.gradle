@@ -132,7 +132,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode getAppVersionCode()
         versionName getAppVersionName()
-        project.archivesBaseName = "common"
+        project.archivesBaseName = "common-base"
         project.version = android.defaultConfig.versionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         //Languages Common supports.
@@ -412,18 +412,18 @@ afterEvaluate {
             distRelease(MavenPublication) {
                 from components.distRelease
                 groupId 'com.microsoft.identity'
-                artifactId 'common'
+                artifactId 'common-base'
                 //Edit the 'version' here for VSTS RC build
                 version = project.version
 
                 pom {
-                    name = 'common'
+                    name = 'common-base'
                     description = 'This library contains code shared between the Active Directory ' +
                             'Authentication Library (ADAL) for Android and the Microsoft ' +
                             'Authentication Library (MSAL) for Android. This library ' +
                             'includes only internal classes and is NOT part of the ' +
                             'public API'
-                    url = 'https://github.com/AzureAD/microsoft-authentication-library-common-for-android'
+                    url = 'https://github.com/wutiantong/microsoft-authentication-library-common-for-android'
                     developers {
                         developer {
                             id = 'microsoft'
@@ -437,29 +437,21 @@ afterEvaluate {
                     }
                     inceptionYear = '2017'
                     scm {
-                        url = 'https://github.com/AzureAD/microsoft-authentication-library-common-for-android/tree/master'
+                        url = 'https://github.com/wutiantong/microsoft-authentication-library-common-for-android/tree/edge-mod-release/21.4.0'
                     }
                     properties = [
-                            branch : 'master',
+                            branch : 'edge-mod-release/21.4.0',
                             version: project.version
                     ]
                 }
-            }
-            distDebug(MavenPublication) {
-                from components.distDebug
-                groupId 'com.microsoft.identity'
-                artifactId 'common-debug'
-                //Edit the 'version' here for VSTS RC build
-
-                version = project.version
             }
         }
 
         // Repositories to which Gradle can publish artifacts
         repositories {
             maven {
-                name "vsts-maven-adal-android"
-                url "https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1"
+                name "AndroidLibraryCenter"
+                url "https://microsoft.pkgs.visualstudio.com/Edge/_packaging/AndroidLibraryCenter/maven/v1"
                 credentials {
                     username project.vstsUsername
                     password project.vstsMavenAccessToken
@@ -482,10 +474,10 @@ tasks.configureEach { task ->
     }
     // Due to gradle version increase, we need to be more explicit in the dependency chain
     // More information can be found here: https://docs.gradle.org/8.1/userguide/validation_problems.html#implicit_dependency
-    if (task.name == "publishDistDebugPublicationToVsts-maven-adal-androidRepository") {
+    if (task.name == "publishDistDebugPublicationToAndroidLibraryCenterRepository") {
         task.mustRunAfter 'generatePomFileForDistReleasePublication', 'bundleDistReleaseAar'
     }
-    if (task.name == "publishDistReleasePublicationToVsts-maven-adal-androidRepository") {
+    if (task.name == "publishDistReleasePublicationToAndroidLibraryCenterRepository") {
         task.dependsOn 'bundleDistReleaseAar'
     }
     if (task.name == "generateMetadataFileForDistDebugPublication") {
@@ -501,9 +493,9 @@ tasks.configureEach { task ->
 tasks.withType(GenerateMavenPom).all {
     def functionName = name.toLowerCase()
     if (functionName.contains("distdebug")) {
-        destination = layout.buildDirectory.file("poms/common-debug-${project.version}.pom").get().asFile
+        destination = layout.buildDirectory.file("poms/${project.name}-debug-${project.version}.pom").get().asFile
     } else if (functionName.contains("distrelease")) {
-        destination = layout.buildDirectory.file("poms/common-${project.version}.pom").get().asFile
+        destination = layout.buildDirectory.file("poms/${project.name}-${project.version}.pom").get().asFile
     }
 }
 

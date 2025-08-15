@@ -1,0 +1,80 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Min Sdk version for YubiKit is 19, as well as for various libraries within CredMan, so override is needed to avoid build errors with Common's min sdk version -->
+    <uses-sdk tools:overrideLibrary="com.yubico.yubikit.android, androidx.credentials.play.services.auth, com.google.android.libraries.identity.googleid" />
+
+    <application>
+        <!-- Because Android detects plugged in YubiKeys as keyboard config changes, configChanges must have `keyboardHidden` and `keyboard` -->
+        <activity
+            android:name="com.microsoft.identity.common.internal.providers.oauth2.SilentAuthorizationActivity"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|keyboard"
+            android:theme="@style/TransparentActivityTheme"/>
+
+        <activity
+            android:name="com.microsoft.identity.common.internal.providers.oauth2.CurrentTaskAuthorizationActivity"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|keyboard" />
+
+        <!-- Activity that handles browser-switch operations.
+             Launches the external browser and receives the result from SwitchBrowserRedirectActivity. -->
+        <activity
+            android:name="com.microsoft.identity.common.internal.providers.oauth2.SwitchBrowserActivity"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|keyboard"
+            android:launchMode="singleTask"
+            android:taskAffinity="" />
+
+        <!-- Activity to handle browser redirects for Switch Browser protocol in non-broker flows.
+             Apps that opt into Switch Browser must override this in their manifest with
+             android:exported="true" and the appropriate intent-filter.
+             taskAffinity="" ensures this activity always creates its own task when launched
+             from the browser (via FLAG_ACTIVITY_NEW_TASK), preventing it from landing in
+             AuthorizationActivity's task where finishAffinity() would kill the WebView. -->
+        <activity
+            android:name="com.microsoft.identity.common.internal.providers.oauth2.SwitchBrowserRedirectActivity"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:exported="false" />
+
+        <!-- Return-to-caller trampoline. Manifest-merged into consuming (MSAL) apps so they do
+             not need to declare it. Authenticator invokes an explicit, immutable PendingIntent
+             targeting this activity after VID completes to reveal the caller's task.
+             Transparent, no-history, not exported; finishes immediately. It is ONLY a navigation
+             signal and never marks VID/auth as successful. -->
+        <activity
+            android:name="com.microsoft.identity.common.internal.ui.OpenIdVcReturnActivity"
+            android:exported="false"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/OpenIdVcReturnActivityTheme" />
+    </application>
+
+    <!-- Required for API Level 30 to make sure we can detect browsers and other apps we want to
+     be able to talk to.-->
+    <!--https://developer.android.com/training/basics/intents/package-visibility-use-cases-->
+    <queries>
+        <package android:name="com.azure.authenticator" />
+        <package android:name="com.microsoft.identity.testuserapp" />
+        <package android:name="com.microsoft.windowsintune.companyportal" />
+        <package android:name="com.microsoft.mockauthapp" />
+        <package android:name="com.microsoft.mockcp" />
+        <package android:name="com.microsoft.mockltw" />
+        <package android:name="com.microsoft.appmanager" />
+        <!-- Required for API Level 30 to make sure we can detect browsers
+        (that don't support custom tabs) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <!-- Required for API Level 30 to make sure we can detect browsers that support custom tabs -->
+        <!-- https://developers.google.com/web/updates/2020/07/custom-tabs-android-11#detecting_browsers_that_support_custom_tabs -->
+        <intent>
+            <action android:name=
+                "android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
+</manifest>
