@@ -60,11 +60,6 @@ public class DualScreenActivity extends FragmentActivity {
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Force set to a light theme (to status and navigation bars) since broker/common activities always have white background.
-        // We don't support dark mode in broker/common activities yet.
-        // Until then, having everything consistently rendered with a white background looks better.
-        // This will also guarantee that the icons on those bars are always visible.
-        setTheme(getThemeResId());
         setEdgeToEdge();
     }
 
@@ -240,6 +235,8 @@ public class DualScreenActivity extends FragmentActivity {
         return windowRect;
     }
 
+    // Edge modification: onCreate no longer calls setTheme(), so this only serves subclasses
+    // such as BrokerAuthorizationActivity that declare their theme via the manifest.
     protected int getThemeResId() {
         return R.style.DualScreenActivityTheme;
     }
