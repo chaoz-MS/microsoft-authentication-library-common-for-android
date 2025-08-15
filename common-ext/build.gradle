@@ -58,7 +58,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode getAppVersionCode()
         versionName getAppVersionName()
-        project.archivesBaseName = "common-base"
+        project.archivesBaseName = "common-ext"
         project.version = android.defaultConfig.versionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         //Languages Common supports.
@@ -66,15 +66,12 @@ android {
                 "eu", "fi", "fr", "gl", "he", "hi", "hr", "hu", "in", "it", "iw", "ja",
                 "kk", "ko", "lt", "lv", "ms", "nb", "nl", "pl", "pt-rBR", "pt-rPT", "ro",
                 "ru", "sk", "sl", "sr", "sv", "th", "tr", "uk", "vi", "zh-rCN", "zh-rTW"
-        buildConfigField("boolean", "newBrokerDiscoveryEnabledFlag", "$newBrokerDiscoveryEnabledFlag")
-        buildConfigField("boolean", "trustDebugBrokerFlag", "$trustDebugBrokerFlag")
-        buildConfigField("boolean", "bypassRedirectUriCheck", "$bypassRedirectUriCheck")
     }
-    //aidl is being set to true since aidl only generated with this set
+
     buildFeatures {
-        buildConfig = true
-        aidl = true
+        buildConfig = false
     }
+
     buildTypes {
         debug {
             testCoverageEnabled enableCodeCoverage
@@ -109,13 +106,6 @@ android {
         disable 'RtlHardcoded'
     }
 
-    testOptions {
-        unitTests.all {
-            exclude 'com/microsoft/identity/common/integration'
-            exclude 'com/microsoft/identity/common/ropc'
-        }
-    }
-
     flavorDimensions "main"
 
     productFlavors {
@@ -135,7 +125,6 @@ android {
     sourceSets {
         main {
             manifest.srcFile 'src/main/AndroidManifest.xml'
-            aidl.srcDirs = ['src/main/aidl']
 
             // Also load source from common-java
             java.srcDirs = ['src/main/java', 'src/main/kotlin']
@@ -151,6 +140,7 @@ android {
 }
 
 dependencies {
+    api project(':common')
     implementation "androidx.webkit:webkit:$rootProject.ext.webkitVersion"
     testImplementation project(path: ':testutils')
 
@@ -242,7 +232,7 @@ android.libraryVariants.all { variant ->
     task("${variant.name}Javadoc", type: Javadoc, dependsOn: "assemble${variant.name.capitalize()}") {
         source = variant.javaCompileProvider.get().source
 
-        title = "Microsoft Identity Android Common"
+        title = "Microsoft Identity Android Common Ext"
 
         // First add all of your dependencies to the classpath, then add the android jars
         doFirst { classpath += files(variant.javaCompiler.classpath.files) }
@@ -323,12 +313,12 @@ afterEvaluate {
             distRelease(MavenPublication) {
                 from components.distRelease
                 groupId 'com.microsoft.identity'
-                artifactId 'common-base'
+                artifactId 'common-ext'
                 //Edit the 'version' here for VSTS RC build
                 version = project.version
 
                 pom {
-                    name = 'common-base'
+                    name = 'common-ext'
                     description = 'This library contains code shared between the Active Directory ' +
                             'Authentication Library (ADAL) for Android and the Microsoft ' +
                             'Authentication Library (MSAL) for Android. This library ' +
