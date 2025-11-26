@@ -23,6 +23,8 @@
 package com.microsoft.identity.common.internal.providers.oauth2
 
 import android.annotation.SuppressLint
+import android.os.Handler
+import android.webkit.WebView
 import androidx.credentials.exceptions.CreateCredentialCancellationException
 import androidx.credentials.exceptions.CreateCredentialInterruptedException
 import androidx.credentials.exceptions.CreateCredentialProviderConfigurationException
@@ -32,7 +34,6 @@ import androidx.credentials.exceptions.GetCredentialInterruptedException
 import androidx.credentials.exceptions.GetCredentialProviderConfigurationException
 import androidx.credentials.exceptions.GetCredentialUnknownException
 import androidx.credentials.exceptions.NoCredentialException
-import androidx.webkit.JavaScriptReplyProxy
 import com.microsoft.identity.common.java.opentelemetry.AttributeName
 import com.microsoft.identity.common.java.opentelemetry.OTelUtility
 import com.microsoft.identity.common.java.opentelemetry.SpanExtension
@@ -44,15 +45,18 @@ import org.json.JSONObject
 
 
 /**
- * Communication channel for sending WebAuthn responses back to JavaScript via [JavaScriptReplyProxy].
+ * Communication channel for sending WebAuthn responses back to JavaScript via WebView.evaluateJavascript.
  *
  * Formats messages as JSON containing status, data, and request type for WebAuthn credential operations.
  *
- * @property replyProxy Proxy for sending messages to JavaScript.
+ * @property webView WebView instance for executing JavaScript callbacks.
+ * @property handler Handler for posting to UI thread.
  * @property requestType Type of WebAuthn request (e.g., "create", "get"). Defaults to "unknown".
+ * @property spanContext Optional span context for telemetry.
  */
 class PasskeyReplyChannel(
-    private val replyProxy: JavaScriptReplyProxy,
+    private val webView: WebView,
+    private val handler: Handler,
     private val requestType: String = "unknown",
     private val spanContext: SpanContext? = null
 ) {
@@ -152,7 +156,18 @@ class PasskeyReplyChannel(
         try {
             SpanExtension.makeCurrentSpan(span).use {
                 val successMessage = ReplyMessage.Success(json, requestType).toString()
-                replyProxy.postMessage(successMessage)
+                // Escape the JSON string for JavaScript
+                val escapedMessage = successMessage.replace("\\", "\\\\")
+                    .replace("'", "\\'")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                
+                handler.post {
+                    webView.evaluateJavascript(
+                        "javascript:window.__webauthn_reply__('$escapedMessage');",
+                        null
+                    )
+                }
                 Logger.info(methodTag, "RequestType: $requestType was successful.")
                 span.setAttribute(AttributeName.passkey_operation_type.name, requestType)
                 span.setStatus(StatusCode.OK)
@@ -189,7 +204,19 @@ class PasskeyReplyChannel(
         try {
             SpanExtension.makeCurrentSpan(span).use {
                 val errorMessage = throwableToErrorMessage(throwable)
-                replyProxy.postMessage(errorMessage.toString())
+                val errorString = errorMessage.toString()
+                // Escape the JSON string for JavaScript
+                val escapedMessage = errorString.replace("\\", "\\\\")
+                    .replace("'", "\\'")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                
+                handler.post {
+                    webView.evaluateJavascript(
+                        "javascript:window.__webauthn_reply__('$escapedMessage');",
+                        null
+                    )
+                }
                 span.setAttribute(AttributeName.passkey_operation_type.name, requestType)
                 span.setAttribute(AttributeName.passkey_dom_exception_name.name, errorMessage.domExceptionName)
                 span.setStatus(StatusCode.ERROR)

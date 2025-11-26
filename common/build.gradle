@@ -151,7 +151,7 @@ android {
 }
 
 dependencies {
-    implementation "androidx.webkit:webkit:$rootProject.ext.webkitVersion"
+    // androidx.webkit dependency removed - using native WebView APIs instead
     testImplementation project(path: ':testutils')
 
     localApi(project(":common4j")) {

@@ -26,13 +26,12 @@ import android.app.Activity
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.annotation.UiThread
 import androidx.credentials.PublicKeyCredential
-import androidx.webkit.JavaScriptReplyProxy
-import androidx.webkit.WebMessageCompat
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 import com.microsoft.identity.common.BuildConfig
 import com.microsoft.identity.common.internal.ui.webview.AzureActiveDirectoryWebViewClient
 import com.microsoft.identity.common.java.exception.ClientException
@@ -44,45 +43,38 @@ import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * WebView message listener for handling WebAuthN/Passkey authentication flows.
+ * WebView JavascriptInterface for handling WebAuthN/Passkey authentication flows.
  *
- * Intercepts postMessage() calls from JavaScript to handle credential creation and retrieval
- * using the Android Credential Manager API. Only accepts requests from allowed origins.
+ * Intercepts calls from JavaScript to handle credential creation and retrieval
+ * using the Android Credential Manager API.
  *
+ * @property webView The WebView instance for executing JavaScript callbacks.
  * @property coroutineScope Scope for launching credential operations.
  * @property credentialManagerHandler Handles passkey creation and retrieval.
  */
 class PasskeyWebListener(
+    private val webView: WebView,
     private val coroutineScope: CoroutineScope,
     private val credentialManagerHandler: CredentialManagerHandler,
-) : WebViewCompat.WebMessageListener {
+) {
 
     /** Tracks if a WebAuthN request is currently pending. Only one request is allowed at a time. */
     private val havePendingRequest = AtomicBoolean(false)
+    
+    /** Handler for executing JavaScript on the UI thread */
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
-     * Handles postMessage() calls from the web page for WebAuthN requests.
+     * JavaScript interface method for handling WebAuthN requests.
+     * Called from JavaScript via window.__webauthn_interface__.handleRequest(messageJson)
      *
-     * @param view The WebView that received the message.
-     * @param message The message received from the web page.
-     * @param sourceOrigin The origin of the message.
-     * @param isMainFrame True if the message originated from the main frame.
-     * @param replyProxy Proxy for sending responses back to JavaScript.
+     * @param messageJson JSON string containing the WebAuthN request.
      */
-    @UiThread
-    override fun onPostMessage(
-        view: WebView,
-        message: WebMessageCompat,
-        sourceOrigin: Uri,
-        isMainFrame: Boolean,
-        replyProxy: JavaScriptReplyProxy,
-    ) {
-        parseMessage(message.data, replyProxy)?.let { webAuthNMessage ->
+    @JavascriptInterface
+    fun handleRequest(messageJson: String) {
+        parseMessage(messageJson)?.let { webAuthNMessage ->
             onRequest(
-                webAuthNMessage = webAuthNMessage,
-                sourceOrigin = sourceOrigin,
-                isMainFrame = isMainFrame,
-                javaScriptReplyProxy = replyProxy
+                webAuthNMessage = webAuthNMessage
             )
         }
     }
@@ -91,22 +83,16 @@ class PasskeyWebListener(
      * Processes an incoming WebAuthN request.
      *
      * @param webAuthNMessage Parsed WebAuthN message.
-     * @param sourceOrigin Origin of the request.
-     * @param isMainFrame True if request is from the main frame.
-     * @param javaScriptReplyProxy Proxy for sending responses.
      */
     private fun onRequest(
-        webAuthNMessage: WebAuthNMessage,
-        sourceOrigin: Uri,
-        isMainFrame: Boolean,
-        javaScriptReplyProxy: JavaScriptReplyProxy
+        webAuthNMessage: WebAuthNMessage
     ) {
         val methodTag = "$TAG:onRequest"
         Logger.info(
             methodTag,
-            "Received WebAuthN request of type: ${webAuthNMessage.type} from origin: $sourceOrigin"
+            "Received WebAuthN request of type: ${webAuthNMessage.type}"
         )
-        val passkeyReplyChannel = PasskeyReplyChannel(javaScriptReplyProxy, webAuthNMessage.type)
+        val passkeyReplyChannel = PasskeyReplyChannel(webView, mainHandler, webAuthNMessage.type)
 
         // Only allow one request at a time.
         if (havePendingRequest.get()) {
@@ -119,18 +105,6 @@ class PasskeyWebListener(
             return
         }
         havePendingRequest.set(true)
-
-        // Only allow requests from the main frame.
-        if (!isMainFrame) {
-            passkeyReplyChannel.postError(
-                ClientException(
-                    ClientException.UNSUPPORTED_OPERATION,
-                    "WebAuthN requests from iframes are not supported."
-                )
-            )
-            havePendingRequest.set(false)
-            return
-        }
 
         when (webAuthNMessage.type) {
             CREATE_UNIQUE_KEY ->
@@ -221,14 +195,12 @@ class PasskeyWebListener(
      * Expected format: `{"type": "create|get", "request": "<JSON payload>"}`
      *
      * @param messageData JSON string to parse.
-     * @param javaScriptReplyProxy Proxy for error responses.
      * @return Parsed [WebAuthNMessage] or null if invalid.
      */
     private fun parseMessage(
-        messageData: String?,
-        javaScriptReplyProxy: JavaScriptReplyProxy
+        messageData: String?
     ): WebAuthNMessage? {
-        val passkeyReplyChannel = PasskeyReplyChannel(javaScriptReplyProxy)
+        val passkeyReplyChannel = PasskeyReplyChannel(webView, mainHandler)
         return runCatching {
             if (messageData.isNullOrBlank()) {
                 throw ClientException(ClientException.MISSING_PARAMETER, "Message data is null or blank")
@@ -273,20 +245,20 @@ class PasskeyWebListener(
         /**
          * Minified JavaScript code that intercepts WebAuthN API calls.
          *
-         * ⚠️ IMPORTANT: This is the MINIFIED version of js-bridge.js
+         * ⚠️ IMPORTANT: This is the MINIFIED version adapted for JavascriptInterface
          *
-         * Source file: common/src/main/java/com/microsoft/identity/common/internal/providers/oauth2/js-bridge.js
+         * Key changes from WebMessageListener version:
+         * - Uses __webauthn_interface__.handleRequest() instead of postMessage()
+         * - Replies are handled via window.__webauthn_reply__ callback set by native code
          *
          * When updating:
-         * 1. Modify the source file (js-bridge.js) with your changes
+         * 1. Update the source JavaScript with your changes
          * 2. Minify the updated JavaScript code
          * 3. Replace the string below with the new minified version
          * 4. Verify the minified code works correctly through testing
-         *
-         * DO NOT modify this constant directly - always update the source file first!
          */
         private const val WEB_AUTHN_INTERFACE_JS_MINIFIED = """
-            var __webauthn_interface__,__webauthn_hooks__;!function(e){__webauthn_interface__.addEventListener("message",(function(e){console.log(e.data);var n=JSON.parse(e.data);"get"===n.type?o(n):"create"===n.type?l(n):console.log("Incorrect response format for reply: "+n.type)}));var n=null,t=null,r=null,a=null;function o(e){if(null!==n&&null!==r){if("success"!=e.status){var o=r;return n=null,r=null,void o(new DOMException(e.data.domExceptionMessage,e.data.domExceptionName))}var s=u(e.data),i=n;n=null,r=null,i(s)}else console.log("Reply failure: Resolve: "+t+" and reject: "+a)}function s(e){var n=e.length%4;return Uint8Array.from(atob(e.replace(/-/g,"+").replace(/_/g,"/").padEnd(e.length+(0===n?0:4-n),"=")),(function(e){return e.charCodeAt(0)})).buffer}function i(e){return btoa(Array.from(new Uint8Array(e),(function(e){return String.fromCharCode(e)})).join("")).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+${'$'}/,"")}function l(e){if(null!==t&&null!==a){if("success"!=e.status){var n=a;return t=null,a=null,void n(new DOMException(e.data.domExceptionMessage,e.data.domExceptionName))}var r=u(e.data),o=t;t=null,a=null,o(r)}else console.log("Reply failure: Resolve: "+t+" and reject: "+a)}function u(e){return e.rawId=s(e.rawId),e.response.clientDataJSON=s(e.response.clientDataJSON),e.response.hasOwnProperty("attestationObject")&&(e.response.attestationObject=s(e.response.attestationObject)),e.response.hasOwnProperty("authenticatorData")&&(e.response.authenticatorData=s(e.response.authenticatorData)),e.response.hasOwnProperty("signature")&&(e.response.signature=s(e.response.signature)),e.response.hasOwnProperty("userHandle")&&(e.response.userHandle=s(e.response.userHandle)),e.getClientExtensionResults=function(){return{}},e.response.getTransports=function(){return e.response.hasOwnProperty("transports")?e.response.transports:[]},e}e.create=function(n){if(!("publicKey"in n))return e.originalCreateFunction(n);var r=new Promise((function(e,n){t=e,a=n})),o=n.publicKey;if(o.hasOwnProperty("challenge")){var s=i(o.challenge);o.challenge=s}if(o.hasOwnProperty("user")&&o.user.hasOwnProperty("id")){var l=i(o.user.id);o.user.id=l}if(o.hasOwnProperty("excludeCredentials")&&Array.isArray(o.excludeCredentials)&&o.excludeCredentials.length>0)for(var u=0;u<o.excludeCredentials.length;u++){var c=o.excludeCredentials[u];c&&c.hasOwnProperty("id")&&(c.id=i(c.id))}var p={type:"create",request:o},_=JSON.stringify(p);return __webauthn_interface__.postMessage(_),r},e.get=function(t){if(!("publicKey"in t))return e.originalGetFunction(t);var a=new Promise((function(e,t){n=e,r=t})),o=t.publicKey;if(o.hasOwnProperty("challenge")){var s=i(o.challenge);o.challenge=s}var l={type:"get",request:o},u=JSON.stringify(l);return __webauthn_interface__.postMessage(u),a},e.onReplyGet=o,e.CM_base64url_decode=s,e.CM_base64url_encode=i,e.onReplyCreate=l}(__webauthn_hooks__||(__webauthn_hooks__={})),__webauthn_hooks__.originalGetFunction=navigator.credentials.get,__webauthn_hooks__.originalCreateFunction=navigator.credentials.create,navigator.credentials.get=__webauthn_hooks__.get,navigator.credentials.create=__webauthn_hooks__.create,window.PublicKeyCredential=function(){},window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable=function(){return Promise.resolve(!0)};
+            (function(){var pendingResolve=null,pendingReject=null;window.__webauthn_reply__=function(response){var data=JSON.parse(response);if(data.status==="success"){var result=decodeCredential(data.data);if(pendingResolve){pendingResolve(result);pendingResolve=null;pendingReject=null}}else{var error=new DOMException(data.data.domExceptionMessage,data.data.domExceptionName);if(pendingReject){pendingReject(error);pendingResolve=null;pendingReject=null}}};function base64urlDecode(str){var padding=str.length%4;return Uint8Array.from(atob(str.replace(/-/g,"+").replace(/_/g,"/").padEnd(str.length+(padding===0?0:4-padding),"=")),function(c){return c.charCodeAt(0)}).buffer}function base64urlEncode(buffer){return btoa(Array.from(new Uint8Array(buffer),function(b){return String.fromCharCode(b)}).join("")).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+${'$'}/,"")}function decodeCredential(cred){cred.rawId=base64urlDecode(cred.rawId);cred.response.clientDataJSON=base64urlDecode(cred.response.clientDataJSON);if(cred.response.attestationObject)cred.response.attestationObject=base64urlDecode(cred.response.attestationObject);if(cred.response.authenticatorData)cred.response.authenticatorData=base64urlDecode(cred.response.authenticatorData);if(cred.response.signature)cred.response.signature=base64urlDecode(cred.response.signature);if(cred.response.userHandle)cred.response.userHandle=base64urlDecode(cred.response.userHandle);cred.getClientExtensionResults=function(){return{}};cred.response.getTransports=function(){return cred.response.transports||[]};return cred}var originalCreate=navigator.credentials.create;var originalGet=navigator.credentials.get;navigator.credentials.create=function(options){if(!("publicKey"in options))return originalCreate.call(this,options);return new Promise(function(resolve,reject){pendingResolve=resolve;pendingReject=reject;var opts=options.publicKey;if(opts.challenge)opts.challenge=base64urlEncode(opts.challenge);if(opts.user&&opts.user.id)opts.user.id=base64urlEncode(opts.user.id);if(opts.excludeCredentials)for(var i=0;i<opts.excludeCredentials.length;i++)if(opts.excludeCredentials[i].id)opts.excludeCredentials[i].id=base64urlEncode(opts.excludeCredentials[i].id);var msg=JSON.stringify({type:"create",request:opts});__webauthn_interface__.handleRequest(msg)})};navigator.credentials.get=function(options){if(!("publicKey"in options))return originalGet.call(this,options);return new Promise(function(resolve,reject){pendingResolve=resolve;pendingReject=reject;var opts=options.publicKey;if(opts.challenge)opts.challenge=base64urlEncode(opts.challenge);var msg=JSON.stringify({type:"get",request:opts});__webauthn_interface__.handleRequest(msg)})};window.PublicKeyCredential=function(){};window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable=function(){return Promise.resolve(true)}})();
          """
 
         /** Allowed origins that can use the WebAuthN interface. */
@@ -325,7 +297,7 @@ class PasskeyWebListener(
         /**
          * Attaches the passkey listener to a WebView.
          *
-         * Requires Android 9+ and WebView WEB_MESSAGE_LISTENER support.
+         * Requires Android 9+ (API 28) for Passkey support.
          *
          * @param webView WebView to attach to.
          * @param activity Activity context for credential operations.
@@ -350,40 +322,32 @@ class PasskeyWebListener(
                 return false
             }
 
-            return if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-                Logger.verbose(methodTag, "WEB_MESSAGE_LISTENER is supported on this WebView.")
+            Logger.verbose(methodTag, "Setting up JavascriptInterface for passkey support.")
 
-                // Attach the WebMessageListener that handles WebAuthN/Passkey communication.
-                WebViewCompat.addWebMessageListener(
-                    webView,
-                    INTERFACE_NAME,
-                    getAllowedOriginRules(),
-                    PasskeyWebListener(
-                        coroutineScope = CoroutineScope(Dispatchers.Default),
-                        credentialManagerHandler = CredentialManagerHandler(activity)
-                    )
-                )
+            // Create and attach the JavascriptInterface that handles WebAuthN/Passkey communication.
+            val passkeyListener = PasskeyWebListener(
+                webView = webView,
+                coroutineScope = CoroutineScope(Dispatchers.Default),
+                credentialManagerHandler = CredentialManagerHandler(activity)
+            )
+            webView.addJavascriptInterface(passkeyListener, INTERFACE_NAME)
 
-                Logger.info(methodTag, "PasskeyWebListener successfully hooked into WebView.")
+            Logger.info(methodTag, "PasskeyWebListener successfully hooked into WebView.")
 
-                // Injects the JavaScript interface early in the page load lifecycle.
-                val scriptToInject = if (BuildConfig.DEBUG) {
-                    WebView.setWebContentsDebuggingEnabled(true)
-                    loadJsBridgeScript(activity)
-                } else {
-                    WEB_AUTHN_INTERFACE_JS_MINIFIED
-                }
-                webClient.addOnPageStartedScript(
-                    TAG,
-                    scriptToInject,
-                    getAllowedOriginRules()
-                )
-
-                true
+            // Injects the JavaScript interface early in the page load lifecycle.
+            val scriptToInject = if (BuildConfig.DEBUG) {
+                WebView.setWebContentsDebuggingEnabled(true)
+                loadJsBridgeScript(activity)
             } else {
-                Logger.warn(methodTag, "WEB_MESSAGE_LISTENER not supported on this device/WebView.")
-                false
+                WEB_AUTHN_INTERFACE_JS_MINIFIED
             }
+            webClient.addOnPageStartedScript(
+                TAG,
+                scriptToInject,
+                getAllowedOriginRules()
+            )
+
+            return true
         }
 
         /**
