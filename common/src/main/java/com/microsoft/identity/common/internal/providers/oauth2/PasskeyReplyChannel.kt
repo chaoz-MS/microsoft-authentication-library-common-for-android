@@ -33,14 +33,9 @@ import androidx.credentials.exceptions.GetCredentialProviderConfigurationExcepti
 import androidx.credentials.exceptions.GetCredentialUnknownException
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.webkit.JavaScriptReplyProxy
-import com.microsoft.identity.common.java.opentelemetry.AttributeName
-import com.microsoft.identity.common.java.opentelemetry.OTelUtility
-import com.microsoft.identity.common.java.opentelemetry.SpanExtension
-import com.microsoft.identity.common.java.opentelemetry.SpanName
 import com.microsoft.identity.common.logging.Logger
-import io.opentelemetry.api.trace.SpanContext
-import io.opentelemetry.api.trace.StatusCode
 import org.json.JSONObject
+import kotlin.jvm.Throws
 
 
 /**
@@ -53,8 +48,7 @@ import org.json.JSONObject
  */
 class PasskeyReplyChannel(
     private val replyProxy: JavaScriptReplyProxy,
-    private val requestType: String = "unknown",
-    private val spanContext: SpanContext? = null
+    private val requestType: String = "unknown"
 ) {
     companion object {
         const val TAG = "PasskeyReplyChannel"
@@ -84,12 +78,8 @@ class PasskeyReplyChannel(
      * Sealed class representing messages sent to JavaScript.
      */
     sealed class ReplyMessage {
-        // Message type (e.g., "create", "get").
         abstract val type: String
-        // Message status ("success" or "error").
         abstract val status: String
-        // Message data as a JSON object.
-        // Either credential data for success or {domExceptionMessage, domExceptionName} for error.
         abstract val data: JSONObject
 
         /**
@@ -112,8 +102,8 @@ class PasskeyReplyChannel(
          * @property type Request type that failed.
          */
         class Error(
-            val domExceptionMessage: String,
-            val domExceptionName: String = DOM_EXCEPTION_NOT_ALLOWED_ERROR,
+            private val domExceptionMessage: String,
+            private val domExceptionName: String = DOM_EXCEPTION_NOT_ALLOWED_ERROR,
             override val type: String
         ) : ReplyMessage() {
             override val status = ERROR_STATUS
@@ -141,35 +131,22 @@ class PasskeyReplyChannel(
      *
      * @param json JSON string containing the credential response.
      */
-    @SuppressLint("RequiresFeature", "Only called when feature is available")
     fun postSuccess(json: String) {
         val methodTag = "$TAG:postSuccess"
-        val span = OTelUtility.createSpanFromParent(
-            SpanName.PasskeyWebListener.name,
-            spanContext
-        )
-
-        try {
-            SpanExtension.makeCurrentSpan(span).use {
-                val successMessage = ReplyMessage.Success(json, requestType).toString()
-                replyProxy.postMessage(successMessage)
-                Logger.info(methodTag, "RequestType: $requestType was successful.")
-                span.setAttribute(AttributeName.passkey_operation_type.name, requestType)
-                span.setStatus(StatusCode.OK)
-            }
-        } catch (throwable: Throwable) {
-            span.setStatus(StatusCode.ERROR)
-            span.setAttribute(AttributeName.passkey_operation_type.name, requestType)
-            span.recordException(throwable)
-            Logger.error(methodTag, "Reply message failed", throwable)
-            throw throwable
-        } finally {
-            span.end()
-        }
+        send(ReplyMessage.Success(json, requestType))
+        Logger.info(methodTag, "RequestType: $requestType, was successful.")
     }
 
-
-
+    /**
+     * Posts an error message with a custom error description.
+     *
+     * @param errorMessage Error description to send.
+     */
+    fun postError(errorMessage: String) {
+        postErrorInternal(
+            ReplyMessage.Error(domExceptionMessage = errorMessage, type = requestType)
+        )
+    }
 
     /**
      * Posts an error message based on a thrown exception.
@@ -178,33 +155,17 @@ class PasskeyReplyChannel(
      *
      * @param throwable Exception to convert and send.
      */
-    @SuppressLint("RequiresFeature", "Only called when feature is available")
     fun postError(throwable: Throwable) {
-        val methodTag = "$TAG:postError"
-        val span = OTelUtility.createSpanFromParent(
-            SpanName.PasskeyWebListener.name,
-            spanContext
-        )
+        postErrorInternal(throwableToErrorMessage(throwable))
+    }
 
-        try {
-            SpanExtension.makeCurrentSpan(span).use {
-                val errorMessage = throwableToErrorMessage(throwable)
-                replyProxy.postMessage(errorMessage.toString())
-                span.setAttribute(AttributeName.passkey_operation_type.name, requestType)
-                span.setAttribute(AttributeName.passkey_dom_exception_name.name, errorMessage.domExceptionName)
-                span.setStatus(StatusCode.ERROR)
-                span.recordException(throwable)
-                Logger.error(methodTag, "RequestType: $requestType failed with error: $errorMessage", null)
-            }
-        } catch (unexpectedException: Throwable) {
-            span.setStatus(StatusCode.ERROR)
-            span.recordException(unexpectedException)
-            span.setAttribute(AttributeName.passkey_operation_type.name, requestType)
-            Logger.error(methodTag, "Reply message failed", unexpectedException)
-            throw unexpectedException
-        } finally {
-            span.end() // Always end the span
-        }
+    /**
+     * Internal method to send error messages and log them.
+     */
+    private fun postErrorInternal(errorMessage: ReplyMessage.Error) {
+        val methodTag = "$TAG:postError"
+        send(errorMessage)
+        Logger.error(methodTag, "RequestType: $requestType, failed with error: $errorMessage", null)
     }
 
     /**
@@ -249,5 +210,19 @@ class PasskeyReplyChannel(
             domExceptionName = exceptionName,
             type = requestType
         )
+    }
+
+    /**
+     * Sends a message to JavaScript via the reply proxy.
+     */
+    @SuppressLint("RequiresFeature", "Only called when feature is available")
+    private fun send(message: ReplyMessage) {
+        val methodTag = "$TAG:send"
+        try {
+            replyProxy.postMessage(message.toString())
+        } catch (t: Throwable) {
+            Logger.error(methodTag, "Reply message failed", t)
+            throw t
+        }
     }
 }

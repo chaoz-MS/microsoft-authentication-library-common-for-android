@@ -110,24 +110,14 @@ class PasskeyWebListener(
 
         // Only allow one request at a time.
         if (havePendingRequest.get()) {
-            passkeyReplyChannel.postError(
-                ClientException(
-                    ClientException.REQUEST_IN_PROGRESS,
-                    "A WebAuthN request is already in progress."
-                )
-            )
+            passkeyReplyChannel.postError("Request already in progress")
             return
         }
         havePendingRequest.set(true)
 
         // Only allow requests from the main frame.
         if (!isMainFrame) {
-            passkeyReplyChannel.postError(
-                ClientException(
-                    ClientException.UNSUPPORTED_OPERATION,
-                    "WebAuthN requests from iframes are not supported."
-                )
-            )
+            passkeyReplyChannel.postError("Requests from iframes are not supported")
             havePendingRequest.set(false)
             return
         }
@@ -153,12 +143,7 @@ class PasskeyWebListener(
             }
 
             else -> {
-                passkeyReplyChannel.postError(
-                    ClientException(
-                        ClientException.UNSUPPORTED_OPERATION,
-                        "Unsupported WebAuthN request type: ${webAuthNMessage.type}"
-                    )
-                )
+                passkeyReplyChannel.postError("Unknown request type: ${webAuthNMessage.type}")
                 havePendingRequest.set(false)
             }
         }
@@ -182,12 +167,8 @@ class PasskeyWebListener(
                 if (publicKeyCredential != null) {
                     reply.postSuccess(publicKeyCredential.authenticationResponseJson)
                 } else {
-                    reply.postError(
-                        ClientException(
-                            ClientException.UNSUPPORTED_OPERATION,
-                            "Retrieved credential is not a PublicKeyCredential."
-                        )
-                    )                }
+                    reply.postError("Unexpected credential type: ${credentialResponse.credential.javaClass.name}")
+                }
            }
             .onFailure { throwable ->
                 reply.postError(throwable)
