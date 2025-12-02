@@ -55,9 +55,10 @@ public enum CommonFlight implements IFlightConfig {
     ACQUIRE_TOKEN_SILENT_TIMEOUT_MILLISECONDS("AcquireTokenSilentTimeoutMilliSeconds", ACQUIRE_TOKEN_SILENT_DEFAULT_TIMEOUT_MILLISECONDS),
 
     /**
-     * Flight to enable passkey registration feature.
+     * Flight to be able to disable/rollback the passkey feature in broker if necessary.
+     * This will be set to true by default.
      */
-    ENABLE_PASSKEY_REGISTRATION("EnablePasskeyRegistration", false),
+    ENABLE_PASSKEY_FEATURE("EnablePasskeyFeature", true),
 
     /**
      * Flight to control the timeout duration for UrlConnection connect timeout.

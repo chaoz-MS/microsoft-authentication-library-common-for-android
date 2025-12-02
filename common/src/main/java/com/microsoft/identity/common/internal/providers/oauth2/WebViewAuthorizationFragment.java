@@ -37,7 +37,6 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -75,7 +74,6 @@ import com.microsoft.identity.common.java.flighting.CommonFlightsManager;
 import com.microsoft.identity.common.java.providers.RawAuthorizationResult;
 import com.microsoft.identity.common.java.ui.webview.authorization.IAuthorizationCompletionCallback;
 import com.microsoft.identity.common.java.util.ClientExtraSku;
-import com.microsoft.identity.common.java.util.StringUtil;
 import com.microsoft.identity.common.logging.Logger;
 
 import java.io.UnsupportedEncodingException;
@@ -84,7 +82,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 
 import static com.microsoft.identity.common.java.AuthenticationConstants.OAuth2.UTID;
-
 
 import io.opentelemetry.api.trace.SpanContext;
 
@@ -342,7 +339,7 @@ public class WebViewAuthorizationFragment extends AuthorizationFragment {
                 requireActivity().runOnUiThread(() -> {
                     // Log the permission request
                     Logger.info(methodTag,
-                            "Permission requested from:" + request.getOrigin() +
+                            "Permission requested from:" +request.getOrigin() +
                                     " for resources:" + Arrays.toString(request.getResources())
                     );
                     mCameraPermissionRequestHandler.handle(request, requireContext());
@@ -359,7 +356,6 @@ public class WebViewAuthorizationFragment extends AuthorizationFragment {
                 return Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888);
             }
         });
-        setupPasskeyWebListener(mWebView, webViewClient);
     }
 
     /**
@@ -412,20 +408,28 @@ public class WebViewAuthorizationFragment extends AuthorizationFragment {
     private HashMap<String, String> getRequestHeaders(final Bundle state) {
         try {
             // Suppressing unchecked warnings due to casting of serializable String to HashMap<String, String>
-            @SuppressWarnings(WarningType.unchecked_warning) final HashMap<String, String> requestHeaders = (HashMap<String, String>) state.getSerializable(REQUEST_HEADERS);
-            final HashMap<String, String> headers = requestHeaders != null ? requestHeaders : new HashMap<>();
+            @SuppressWarnings(WarningType.unchecked_warning)
+            HashMap<String, String> requestHeaders = (HashMap<String, String>) state.getSerializable(REQUEST_HEADERS);
+            // In cases of WebView as an auth agent, we want to always add the passkey protocol header.
+            // (Not going to add passkey protocol header until full feature is ready.)
+            if (CommonFlightsManager.INSTANCE.getFlightsProvider().isFlightEnabled(CommonFlight.ENABLE_PASSKEY_FEATURE)) {
+                if (requestHeaders == null) {
+                    requestHeaders = new HashMap<>();
+                }
+                requestHeaders.put(FidoConstants.PASSKEY_PROTOCOL_HEADER_NAME, FidoConstants.PASSKEY_PROTOCOL_HEADER_VALUE);
+            }
+
             // Attach client extras header for ESTS telemetry. Only done for broker requests
             if (isBrokerRequest) {
                 final ClientExtraSku clientExtraSku = ClientExtraSku.builder()
                         .srcSku(state.getString(PRODUCT))
                         .srcSkuVer(state.getString(VERSION))
                         .build();
-                headers.put(com.microsoft.identity.common.java.AuthenticationConstants.SdkPlatformFields.CLIENT_EXTRA_SKU, clientExtraSku.toString());
+                requestHeaders.put(com.microsoft.identity.common.java.AuthenticationConstants.SdkPlatformFields.CLIENT_EXTRA_SKU, clientExtraSku.toString());
             }
-            injectPasskeyProtocolHeader(headers);
-            return headers;
+            return requestHeaders;
         } catch (Exception e) {
-            return new HashMap<>();
+            return null;
         }
     }
 
@@ -472,69 +476,9 @@ public class WebViewAuthorizationFragment extends AuthorizationFragment {
 
     /**
      * Set the switch browser bundle to be used when resuming the flow.
-     *
      * @param bundle The bundle containing the data needed to resume the flow.
      */
     public static synchronized void setSwitchBrowserBundle(@Nullable final Bundle bundle) {
         switchBrowserBundle = bundle;
-    }
-
-
-    /**
-     * Sets up the PasskeyWebListener if the request headers indicate that both authentication and registration
-     * are supported. If the hook fails, it downgrades to authentication only.
-     * Called during WebView setup.
-     */
-    private void setupPasskeyWebListener(@NonNull final WebView webView,
-                                         @NonNull final AzureActiveDirectoryWebViewClient webViewClient) {
-        final String methodTag = TAG + ":setupPasskeyWebListener";
-        final String passkeyProtocolHeader = mRequestHeaders.get(FidoConstants.PASSKEY_PROTOCOL_HEADER_NAME);
-        if (FidoConstants.PASSKEY_PROTOCOL_HEADER_AUTH_AND_REG.equals(passkeyProtocolHeader)) {
-            final boolean passkeyWebListenerHooked = PasskeyWebListener.hook(webView, requireActivity(), webViewClient);
-            if (!passkeyWebListenerHooked) {
-                Logger.warn(methodTag, "PasskeyWebListener hook failed, Downgrading to auth only.");
-                // Downgrade to auth only
-                mRequestHeaders.put(FidoConstants.PASSKEY_PROTOCOL_HEADER_NAME, FidoConstants.PASSKEY_PROTOCOL_HEADER_AUTH_ONLY);
-            }
-        } else {
-            Logger.warn(methodTag, "Passkey protocol header not found or not for both auth and reg." +
-                    " Not hooking the PasskeyWebListener.");
-        }
-    }
-
-    /**
-     * Injects the Passkey protocol header into the request headers if the WebAuthN query parameter is present.
-     * If the header already exists, it will not be modified. If the request is from broker and the Passkey registration flight is enabled,
-     * the header will indicate support for both authentication and registration.
-     *
-     * @param requestHeaders The request headers to modify.
-     */
-    private void injectPasskeyProtocolHeader(@NonNull final HashMap<String, String> requestHeaders) {
-        final String methodTag = TAG + ":injectPasskeyProtocolHeader";
-        final Uri authRequestUri = Uri.parse(mAuthorizationRequestUrl);
-        final String webAuthNQueryParameter = authRequestUri.getQueryParameter(FidoConstants.WEBAUTHN_QUERY_PARAMETER_FIELD);
-
-        if (StringUtil.isNullOrEmpty(webAuthNQueryParameter)) {
-            return;
-        }
-
-        if (isBrokerRequest) {
-            final String passkeyProtocolHeaderValue = CommonFlightsManager.INSTANCE
-                    .getFlightsProvider().isFlightEnabled(CommonFlight.ENABLE_PASSKEY_REGISTRATION)
-                    ? FidoConstants.PASSKEY_PROTOCOL_HEADER_AUTH_AND_REG
-                    : FidoConstants.PASSKEY_PROTOCOL_HEADER_AUTH_ONLY;
-            Logger.verbose(methodTag, "Injecting Passkey protocol header for broker request: "
-                    + passkeyProtocolHeaderValue);
-            requestHeaders.put(FidoConstants.PASSKEY_PROTOCOL_HEADER_NAME, passkeyProtocolHeaderValue);
-        } else {
-            if (requestHeaders.containsKey(FidoConstants.PASSKEY_PROTOCOL_HEADER_NAME)) {
-                Logger.verbose(methodTag, "Passkey protocol header already exists in request headers  "
-                        + requestHeaders.get(FidoConstants.PASSKEY_PROTOCOL_HEADER_NAME));
-            } else {
-                Logger.verbose(methodTag, "Injecting Passkey protocol header for auth only.");
-                requestHeaders.put(FidoConstants.PASSKEY_PROTOCOL_HEADER_NAME, FidoConstants.PASSKEY_PROTOCOL_HEADER_AUTH_ONLY);
-            }
-        }
-
     }
 }
