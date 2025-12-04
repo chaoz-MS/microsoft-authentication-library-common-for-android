@@ -23,6 +23,9 @@
 package com.microsoft.identity.common.internal.providers.oauth2
 
 import android.annotation.SuppressLint
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebView
 import androidx.credentials.exceptions.CreateCredentialCancellationException
 import androidx.credentials.exceptions.CreateCredentialInterruptedException
 import androidx.credentials.exceptions.CreateCredentialProviderConfigurationException
@@ -32,7 +35,6 @@ import androidx.credentials.exceptions.GetCredentialInterruptedException
 import androidx.credentials.exceptions.GetCredentialProviderConfigurationException
 import androidx.credentials.exceptions.GetCredentialUnknownException
 import androidx.credentials.exceptions.NoCredentialException
-import androidx.webkit.JavaScriptReplyProxy
 import com.microsoft.identity.common.java.opentelemetry.AttributeName
 import com.microsoft.identity.common.java.opentelemetry.OTelUtility
 import com.microsoft.identity.common.java.opentelemetry.SpanExtension
@@ -44,18 +46,21 @@ import org.json.JSONObject
 
 
 /**
- * Communication channel for sending WebAuthn responses back to JavaScript via [JavaScriptReplyProxy].
+ * Communication channel for sending WebAuthn responses back to JavaScript via WebView.
  *
  * Formats messages as JSON containing status, data, and request type for WebAuthn credential operations.
+ * Uses WebView.evaluateJavascript() to send messages back to JavaScript.
  *
- * @property replyProxy Proxy for sending messages to JavaScript.
+ * @property webView WebView instance for executing JavaScript.
  * @property requestType Type of WebAuthn request (e.g., "create", "get"). Defaults to "unknown".
  */
 class PasskeyReplyChannel(
-    private val replyProxy: JavaScriptReplyProxy,
+    private val webView: WebView,
     private val requestType: String = "unknown",
     private val spanContext: SpanContext? = null
 ) {
+    
+    private val mainHandler = Handler(Looper.getMainLooper())
     companion object {
         const val TAG = "PasskeyReplyChannel"
 
@@ -141,7 +146,7 @@ class PasskeyReplyChannel(
      *
      * @param json JSON string containing the credential response.
      */
-    @SuppressLint("RequiresFeature", "Only called when feature is available")
+    @SuppressLint("RequiresFeature")
     fun postSuccess(json: String) {
         val methodTag = "$TAG:postSuccess"
         val span = OTelUtility.createSpanFromParent(
@@ -152,7 +157,7 @@ class PasskeyReplyChannel(
         try {
             SpanExtension.makeCurrentSpan(span).use {
                 val successMessage = ReplyMessage.Success(json, requestType).toString()
-                replyProxy.postMessage(successMessage)
+                postMessageToJavaScript(successMessage)
                 Logger.info(methodTag, "RequestType: $requestType was successful.")
                 span.setAttribute(AttributeName.passkey_operation_type.name, requestType)
                 span.setStatus(StatusCode.OK)
@@ -178,7 +183,7 @@ class PasskeyReplyChannel(
      *
      * @param throwable Exception to convert and send.
      */
-    @SuppressLint("RequiresFeature", "Only called when feature is available")
+    @SuppressLint("RequiresFeature")
     fun postError(throwable: Throwable) {
         val methodTag = "$TAG:postError"
         val span = OTelUtility.createSpanFromParent(
@@ -189,7 +194,7 @@ class PasskeyReplyChannel(
         try {
             SpanExtension.makeCurrentSpan(span).use {
                 val errorMessage = throwableToErrorMessage(throwable)
-                replyProxy.postMessage(errorMessage.toString())
+                postMessageToJavaScript(errorMessage.toString())
                 span.setAttribute(AttributeName.passkey_operation_type.name, requestType)
                 span.setAttribute(AttributeName.passkey_dom_exception_name.name, errorMessage.domExceptionName)
                 span.setStatus(StatusCode.ERROR)
@@ -204,6 +209,25 @@ class PasskeyReplyChannel(
             throw unexpectedException
         } finally {
             span.end() // Always end the span
+        }
+    }
+    
+    /**
+     * Posts a message to JavaScript using WebView.evaluateJavascript().
+     * Ensures execution on the main thread.
+     *
+     * @param message The JSON message to send.
+     */
+    private fun postMessageToJavaScript(message: String) {
+        // Use JSONObject.quote() to properly escape the message for JavaScript
+        // This handles all special characters including quotes, backslashes, newlines, etc.
+        val quotedMessage = JSONObject.quote(message)
+        
+        // quotedMessage already includes the surrounding quotes, so use it directly
+        val jsCode = "window.__webauthn_reply__($quotedMessage)"
+        
+        mainHandler.post {
+            webView.evaluateJavascript(jsCode, null)
         }
     }
 

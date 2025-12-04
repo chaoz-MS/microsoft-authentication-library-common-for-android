@@ -198,7 +198,8 @@ android {
 }
 
 dependencies {
-    implementation "androidx.webkit:webkit:$rootProject.ext.webkitVersion"
+    // Edge remove androidx dependency.
+    // implementation "androidx.webkit:webkit:$rootProject.ext.webkitVersion"
     testImplementation project(path: ':testutils')
 
     localApi(project(":common4j")) {
