@@ -8,15 +8,13 @@ buildscript {
     repositories {
         google()
         // If you don't have access to the package feed uncomment these repositories
-        //  mavenCentral()
+        mavenCentral()
         maven {
             name "vsts-maven-adal-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1"
             credentials {
-                credentials {
-                    username System.getenv("ENV_VSTS_MVN_CRED_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_CRED_USERNAME") : project.findProperty("vstsUsername")
-                    password System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
-                }
+                username System.getenv("ENV_VSTS_MVN_CRED_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_CRED_USERNAME") : project.findProperty("vstsUsername")
+                password System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
             }
         }
     }
@@ -35,7 +33,7 @@ allprojects {
      */
     repositories {
         // If you don't have access to the package feed uncomment these repositories
-        // mavenCentral()
+        mavenCentral()
         google()
         mavenLocal()
         maven {
@@ -44,6 +42,15 @@ allprojects {
             credentials {
                 username project.vstsUsername
                 password project.vstsMavenAccessToken
+            }
+        }
+        // AndroidADAL feed - contains display-mask and other dependencies
+        maven {
+            name "vsts-maven-androidadal"
+            url "https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1"
+            credentials {
+                username project.findProperty("officeVstsUsername") ?: project.vstsUsername
+                password project.findProperty("officeVstsMavenAccessToken") ?: project.vstsMavenAccessToken
             }
         }
     }
