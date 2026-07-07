@@ -54,7 +54,11 @@ class CredentialManagerHandler(private val activity: Activity) {
     suspend fun createPasskey(request: String): CreatePublicKeyCredentialResponse {
         val methodTag = "$TAG:createPasskey"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val createRequest = CreatePublicKeyCredentialRequest(request)
+            // Pass all args explicitly so this binds to the real
+            // (String, ByteArray?, Boolean, String?, Boolean) constructor rather than the
+            // version-specific $default synthetic, which differs in Edge's runtime
+            // androidx.credentials and otherwise crashes with NoSuchMethodError.
+            val createRequest = CreatePublicKeyCredentialRequest(request, null, false, null, false)
             return (mCredMan.createCredential(
                 activity,
                 createRequest
