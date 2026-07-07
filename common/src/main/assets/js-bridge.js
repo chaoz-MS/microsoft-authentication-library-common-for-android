@@ -25,8 +25,11 @@ var __webauthn_interface__;
 var __webauthn_hooks__;
 (function (__webauthn_hooks__) {
 
-    //Adding event listener to the interface for replies by default
-    __webauthn_interface__.addEventListener('message', onReply);
+    // Register the reply callback invoked by native code via
+    // WebView.evaluateJavascript: window.__webauthn_reply__(<jsonString>).
+    // Edge WebView's injected __webauthn_interface__ (addJavascriptInterface) is
+    // not an EventTarget, so we cannot use addEventListener here.
+    window.__webauthn_reply__ = onReply;
     // pendingResolveGet/Create is the thunk to resolve an outstanding get request.
     var pendingResolveGet = null;
     var pendingResolveCreate = null;
@@ -91,10 +94,11 @@ var __webauthn_hooks__;
     }
     __webauthn_hooks__.get = get;
 
-    // The embedder gives replies back here, caught by the event listener.
+    // The embedder gives replies back here via window.__webauthn_reply__(json).
+    // `msg` is the reply JSON string passed directly by native code.
     function onReply(msg) {
-        console.log(msg.data);
-        var reply = JSON.parse(msg.data);
+        console.log(msg);
+        var reply = JSON.parse(msg);
         if(reply.type === "get") {
             onReplyGet(reply);
         } else if (reply.type === "create") {
