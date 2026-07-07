@@ -29,10 +29,6 @@ import android.os.Build
 import android.webkit.WebView
 import androidx.annotation.UiThread
 import androidx.credentials.PublicKeyCredential
-import androidx.webkit.JavaScriptReplyProxy
-import androidx.webkit.WebMessageCompat
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 import com.microsoft.identity.common.BuildConfig
 import com.microsoft.identity.common.internal.providers.oauth2.PasskeyWebListener.Companion.hook
 import com.microsoft.identity.common.internal.ui.webview.AzureActiveDirectoryWebViewClient
@@ -60,39 +56,39 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * @property coroutineScope Scope for launching credential operations (must use [kotlinx.coroutines.Dispatchers.Main]).
  * @property credentialManagerHandler Handles passkey creation and retrieval.
+ * @property webView WebView instance for sending responses back to JavaScript.
  */
 class PasskeyWebListener(
     private val coroutineScope: CoroutineScope,
     private val credentialManagerHandler: CredentialManagerHandler,
+    private val webView: WebView,
     private val otelContext: io.opentelemetry.context.Context? = null
-) : WebViewCompat.WebMessageListener {
+) : WebViewJavaScriptBridge.MessageListener {
 
     /** Tracks if a WebAuthN request is currently pending. Only one request is allowed at a time. */
     private val havePendingRequest = AtomicBoolean(false)
 
     /**
-     * Handles postMessage() calls from the web page for WebAuthN requests.
+     * Handles messages received from the web page via JavaScript bridge.
      *
-     * @param view The WebView that received the message.
-     * @param message The message received from the web page.
+     * @param webView The WebView that received the message.
+     * @param messageData The message data string.
      * @param sourceOrigin The origin of the message.
-     * @param isMainFrame True if the message originated from the main frame.
-     * @param replyProxy Proxy for sending responses back to JavaScript.
      */
     @UiThread
-    override fun onPostMessage(
-        view: WebView,
-        message: WebMessageCompat,
-        sourceOrigin: Uri,
-        isMainFrame: Boolean,
-        replyProxy: JavaScriptReplyProxy,
+    override fun onMessageReceived(
+        webView: WebView,
+        messageData: String,
+        sourceOrigin: Uri
     ) {
-        parseMessage(message.data, replyProxy)?.let { webAuthNMessage ->
+        // WebView messages are always from the main frame (no iframe support with addJavascriptInterface).
+        val isMainFrame = true
+
+        parseMessage(messageData)?.let { webAuthNMessage ->
             onRequest(
                 webAuthNMessage = webAuthNMessage,
                 sourceOrigin = sourceOrigin,
-                isMainFrame = isMainFrame,
-                javaScriptReplyProxy = replyProxy
+                isMainFrame = isMainFrame
             )
         }
     }
@@ -103,13 +99,11 @@ class PasskeyWebListener(
      * @param webAuthNMessage Parsed WebAuthN message.
      * @param sourceOrigin Origin of the request.
      * @param isMainFrame True if request is from the main frame.
-     * @param javaScriptReplyProxy Proxy for sending responses.
      */
     private fun onRequest(
         webAuthNMessage: WebAuthNMessage,
         sourceOrigin: Uri,
-        isMainFrame: Boolean,
-        javaScriptReplyProxy: JavaScriptReplyProxy
+        isMainFrame: Boolean
     ) {
         val methodTag = "$TAG:onRequest"
         Logger.info(
@@ -117,7 +111,7 @@ class PasskeyWebListener(
             "Received WebAuthN request of type: ${webAuthNMessage.type} from origin: $sourceOrigin"
         )
         val passkeyReplyChannel = PasskeyReplyChannel(
-            replyProxy = javaScriptReplyProxy,
+            webView = webView,
             requestType = webAuthNMessage.type,
             otelContext = otelContext
         )
@@ -235,15 +229,13 @@ class PasskeyWebListener(
      * Expected format: `{"type": "create|get", "request": "<JSON payload>"}`
      *
      * @param messageData JSON string to parse.
-     * @param javaScriptReplyProxy Proxy for error responses.
      * @return Parsed [WebAuthNMessage] or null if invalid.
      */
     private fun parseMessage(
-        messageData: String?,
-        javaScriptReplyProxy: JavaScriptReplyProxy
+        messageData: String?
     ): WebAuthNMessage? {
         val passkeyReplyChannel = PasskeyReplyChannel(
-            replyProxy = javaScriptReplyProxy,
+            webView = webView,
             otelContext = otelContext
         )
         return runCatching {
@@ -337,39 +329,38 @@ class PasskeyWebListener(
                 return false
             }
 
-            return if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-                Logger.verbose(methodTag, "WEB_MESSAGE_LISTENER is supported on this WebView.")
+            // Create the listener instance.
+            // CredentialManager must be called on the main thread (it shows system UI),
+            // so the coroutine scope must use Dispatchers.Main.
+            val listener = PasskeyWebListener(
+                coroutineScope = CoroutineScope(Dispatchers.Main),
+                credentialManagerHandler = CredentialManagerHandler(activity),
+                webView = webView,
+                otelContext = (activity as? AuthorizationActivity)?.otelContext
+            )
 
-                // Attach the WebMessageListener that handles WebAuthN/Passkey communication.
-                WebViewCompat.addWebMessageListener(
-                    webView,
-                    INTERFACE_NAME,
-                    PasskeyOriginRulesManager.getAllowedOriginRules(),
-                    PasskeyWebListener(
-                        // CredentialManager must be called on the main thread (it shows system UI),
-                        // so the coroutine scope must use Dispatchers.Main.
-                        coroutineScope = CoroutineScope(Dispatchers.Main),
-                        credentialManagerHandler = CredentialManagerHandler(activity),
-                        otelContext = (activity as? AuthorizationActivity)?.otelContext
-                    )
-                )
+            // Create and attach the JavaScript bridge.
+            val bridge = WebViewJavaScriptBridge(
+                webView = webView,
+                interfaceName = INTERFACE_NAME,
+                allowedOrigins = PasskeyOriginRulesManager.getAllowedOriginRules(),
+                listener = listener
+            )
+            bridge.attach()
+            bridge.injectReplyCallback("__webauthn_reply__")
 
-                Logger.info(methodTag, "PasskeyWebListener successfully hooked into WebView.")
+            Logger.info(methodTag, "PasskeyWebListener successfully hooked into WebView.")
 
-                // Injects the JavaScript interface early in the page load lifecycle.
-                val scriptToInject = if (BuildConfig.DEBUG) {
-                    WebView.setWebContentsDebuggingEnabled(true)
-                    loadJsBridgeScript(activity)
-                } else {
-                    WEB_AUTHN_INTERFACE_JS_MINIFIED
-                }
-                webClient.addPasskeyRegistrationJsScript(scriptToInject)
-
-                true
+            // Injects the JavaScript interface early in the page load lifecycle.
+            val scriptToInject = if (BuildConfig.DEBUG) {
+                WebView.setWebContentsDebuggingEnabled(true)
+                loadJsBridgeScript(activity)
             } else {
-                Logger.warn(methodTag, "WEB_MESSAGE_LISTENER not supported on this device/WebView.")
-                false
+                WEB_AUTHN_INTERFACE_JS_MINIFIED
             }
+            webClient.addPasskeyRegistrationJsScript(scriptToInject)
+
+            return true
         }
 
         /**
