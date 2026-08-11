@@ -156,26 +156,4 @@ class WebViewJavaScriptBridge(
             origin.equals(allowedOrigin, ignoreCase = true)
         }
     }
-
-    /**
-     * Injects JavaScript code to set up the reply callback.
-     * This creates window.__webauthn_reply__ for PasskeyReplyChannel to use.
-     *
-     * @param replyCallbackName Name of the global callback function (default: __webauthn_reply__).
-     */
-    fun injectReplyCallback(replyCallbackName: String = "__webauthn_reply__") {
-        val jsCode = """
-            (function() {
-                window.$replyCallbackName = function(message) {
-                    console.log('Reply received:', message);
-                    // This will be called by PasskeyReplyChannel.postMessageToJavaScript()
-                };
-            })();
-        """.trimIndent()
-
-        mainHandler.post {
-            webView.evaluateJavascript(jsCode, null)
-            Logger.verbose(TAG, "Injected reply callback: window.$replyCallbackName")
-        }
-    }
 }
