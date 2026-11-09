@@ -1,0 +1,210 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
+plugins {
+    id 'com.android.library'
+    id 'kotlin-android'
+    id 'maven-publish'
+}
+
+apply from: '../versioning/version_tasks.gradle'
+
+def generatedMain = layout.buildDirectory.dir('generated/systemWebView/main')
+def originalPrefix = 'com.microsoft.identity.common.'
+def systemPrefix = "${originalPrefix}systemwebview."
+def uiPackages = ['internal.ui', 'internal.fido', 'internal.providers.oauth2']
+def uiClasses = ['internal.broker.AuthUxJavaScriptInterface',
+                 'components.AndroidPlatformComponentsFactoryExt', 'R']
+def relocate = { String text ->
+    (uiPackages + uiClasses).each { suffix ->
+        text = text.replaceAll(
+                /(?<![\w.])${java.util.regex.Pattern.quote(originalPrefix + suffix)}\b/,
+                systemPrefix + suffix)
+    }
+    // The browser selector and basic factory are owned by common-base, not the UI.
+    text = text.replace("${systemPrefix}internal.ui.browser.AndroidBrowserSelector",
+            "${originalPrefix}internal.ui.browser.AndroidBrowserSelector")
+    text = text.replace('R.layout.common_activity_authentication',
+            'R.layout.system_common_activity_authentication')
+    text = text.replace('@layout/common_activity_authentication',
+            '@layout/system_common_activity_authentication')
+    text = text.replace('"js-bridge.js"', '"systemwebview/js-bridge.js"')
+    text = text.replace("package ${originalPrefix}internal.broker",
+            "package ${systemPrefix}internal.broker\n" +
+                    "import ${originalPrefix}internal.broker.AuthUxJsonPayload\n" +
+                    "import ${originalPrefix}internal.broker.AuthUxJsonPayloadKTDeserializer\n" +
+                    "import ${originalPrefix}internal.broker.AuthUxParams")
+    text = text.replace("package ${originalPrefix}components;",
+            "package ${systemPrefix}components;\n" +
+                    "import ${originalPrefix}components.AndroidPlatformComponentsFactory;")
+    text
+}
+
+def platformOverrides = fileTree('platform/src/main').files.collect {
+    file('platform/src/main').toPath().relativize(it.toPath()).toString().replace('\\', '/')
+}
+def generateSystemWebViewSources = tasks.register('generateSystemWebViewSources', Sync) {
+    inputs.property('namespace', systemPrefix)
+    from('../common-ext/src/main') {
+        exclude platformOverrides
+        exclude '**/WebViewJavaScriptBridge.kt'
+    }
+    from('platform/src/main')
+    into generatedMain
+    includeEmptyDirs = false
+    filteringCharset = 'UTF-8'
+    filesMatching(['**/*.java', '**/*.kt', '**/*.xml', '**/*.js']) {
+        filter { String line ->
+            relocate(line).replace('com.microsoft.authentication.internal.EdgeOneAuthWebView',
+                    'WebView')
+        }
+    }
+    eachFile {
+        path = path.replace('java/com/microsoft/identity/common/',
+                'java/com/microsoft/identity/common/systemwebview/')
+        path = path.replace('res/layout/common_activity_authentication.xml',
+                'res/layout/system_common_activity_authentication.xml')
+        path = path.replace('assets/js-bridge.js', 'assets/systemwebview/js-bridge.js')
+    }
+    doFirst {
+        ['PasskeyWebListener.kt', 'PasskeyReplyChannel.kt'].each { name ->
+            def relativePath = 'java/com/microsoft/identity/common/internal/providers/oauth2/' + name
+            if (!platformOverrides.contains(relativePath)) {
+                throw new GradleException("Missing system WebView transport override: ${name}")
+            }
+        }
+        def layout = file('../common-ext/src/main/res/layout/common_activity_authentication.xml').text
+        if (layout.count('com.microsoft.authentication.internal.EdgeOneAuthWebView') != 1) {
+            throw new GradleException('Authentication layout changed; review the system WebView variant')
+        }
+    }
+}
+
+android {
+    namespace 'com.microsoft.identity.common.systemwebview'
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode getAppVersionCode()
+        versionName getAppVersionName()
+        project.archivesBaseName = 'common-sys-webview'
+        project.version = versionName
+        consumerProguardFiles '../common-ext/consumer-rules.pro'
+    }
+    buildFeatures {
+        buildConfig = false
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = '1.8'
+        languageVersion = '1.9'
+        apiVersion = '1.9'
+    }
+    flavorDimensions 'main'
+    productFlavors {
+        local { dimension 'main' }
+        dist { dimension 'main' }
+    }
+    sourceSets {
+        main {
+            manifest.srcFile generatedMain.map { it.file('AndroidManifest.xml') }
+            java.srcDirs = [generateSystemWebViewSources.map {
+                new File(it.destinationDir, 'java')
+            }]
+            res.srcDirs = [generatedMain.map { it.dir('res') }]
+            assets.srcDirs = [generatedMain.map { it.dir('assets') }]
+        }
+    }
+    libraryVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "${archivesBaseName}-${version}.aar"
+        }
+    }
+    publishing {
+        singleVariant('distRelease')
+    }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn generateSystemWebViewSources
+}
+
+apply from: '../gradle/common-ui-dependencies.gradle'
+dependencies {
+    implementation "androidx.webkit:webkit:$rootProject.ext.webkitVersion"
+}
+
+def sourcesJar = tasks.register('sourcesJar', Jar) {
+    dependsOn generateSystemWebViewSources
+    from generatedMain.map { it.dir('java') }
+    archiveClassifier.set('sources')
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            distRelease(MavenPublication) {
+                from components.distRelease
+                artifact sourcesJar
+                groupId 'com.microsoft.identity'
+                artifactId 'common-sys-webview'
+                version project.version
+                pom {
+                    name = 'common-sys-webview'
+                    description = 'Experimental system WebView UI for Edge, sharing common-base.'
+                    url = 'https://github.com/AzureAD/microsoft-authentication-library-common-for-android'
+                    licenses {
+                        license { name = 'MIT License' }
+                    }
+                }
+            }
+        }
+        repositories {
+            maven {
+                name 'AndroidLibraryCenter'
+                url 'https://microsoft.pkgs.visualstudio.com/Edge/_packaging/AndroidLibraryCenter/maven/v1'
+                credentials {
+                    username project.vstsUsername
+                    password project.vstsMavenAccessToken
+                }
+            }
+        }
+    }
+}
+
+def testAarVerifier = tasks.register('testAarVerifier', Exec) {
+    group = 'verification'
+    environment 'PYTHONDONTWRITEBYTECODE', '1'
+    commandLine 'python3', '-m', 'unittest', 'discover',
+            '-s', projectDir.absolutePath, '-p', 'verify_aar_test.py'
+}
+
+def verifySystemWebViewAar = tasks.register('verifySystemWebViewAar', Exec) {
+    group = 'verification'
+    environment 'PYTHONDONTWRITEBYTECODE', '1'
+    dependsOn testAarVerifier, ':common:bundleDistReleaseAar',
+            ':common-ext:bundleDistReleaseAar', 'bundleDistReleaseAar'
+    commandLine 'python3', file('verify_aar.py').absolutePath,
+            project(':common').file("build/outputs/aar/common-base-${project.version}.aar"),
+            project(':common-ext').file("build/outputs/aar/common-ext-${project.version}.aar"),
+            layout.buildDirectory.file("outputs/aar/common-sys-webview-${project.version}.aar").get().asFile
+}
+
+tasks.named('check').configure {
+    dependsOn verifySystemWebViewAar
+}
+tasks.configureEach { task ->
+    if (task.name.startsWith('publishDistReleasePublicationTo')) {
+        task.dependsOn verifySystemWebViewAar
+    }
+}

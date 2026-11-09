@@ -109,13 +109,6 @@ def registerJacocoXmlReport = { String taskName, String variant ->
 registerJacocoXmlReport("jacocoTestReport", "localDebug")     // PR validation (local flavor)
 registerJacocoXmlReport("jacocoDistTestReport", "distDebug")  // weekly release (dist flavor)
 
-// In dev, we want to keep the dependencies(common4j, broker4j, common) to 1.0.+ to be able to be consumed by daily dev pipeline.
-// In release/*, we change these to specific versions being consumed.
-def common4jVersion = "24.7.0"
-if (project.hasProperty("distCommon4jVersion") && project.distCommon4jVersion != '') {
-    common4jVersion = project.distCommon4jVersion
-}
-
 boolean newBrokerDiscoveryEnabledFlag = project.hasProperty("newBrokerDiscoveryEnabledFlag")
 boolean trustDebugBrokerFlag = project.hasProperty("trustDebugBrokerFlag")
 boolean bypassRedirectUriCheck = project.hasProperty("bypassRedirectUriCheck")
@@ -213,53 +206,13 @@ android {
     }
 }
 
+apply from: '../gradle/common-ui-dependencies.gradle'
+
 dependencies {
-    api project(':common')
     testImplementation project(path: ':testutils')
 
-    localApi(project(":common4j")) {
-        transitive = false
-    }
-
-    distApi("com.microsoft.identity:common4j:${common4jVersion}") {
-        transitive = false
-    }
-
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlinVersion"
     testImplementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlinVersion"
     androidTestImplementation "org.jetbrains.kotlin:kotlin-stdlib:$rootProject.ext.kotlinVersion"
-    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:$rootProject.ext.kotlinXCoroutinesVersion"
-    implementation "androidx.lifecycle:lifecycle-runtime-ktx:$rootProject.ext.lifecycleKtxVersion"
-
-    implementation "androidx.datastore:datastore-preferences:$rootProject.ext.jetpackDataStoreVersion"
-
-    implementation(group: 'com.microsoft.device.display', name: 'display-mask', version: '0.3.0')
-
-    implementation 'org.apache.httpcomponents.core5:httpcore5:5.4.3'
-    implementation "com.nimbusds:nimbus-jose-jwt:$rootProject.ext.nimbusVersion"
-    implementation "androidx.activity:activity:1.8.2"
-    implementation "androidx.appcompat:appcompat:$rootProject.ext.appCompatVersion"
-    implementation "com.google.code.gson:gson:$rootProject.ext.gsonVersion"
-    implementation "com.squareup.moshi:moshi:$rootProject.ext.moshiVersion"
-    implementation "com.squareup.moshi:moshi-adapters:$rootProject.ext.moshiAdaptersVersion"
-    implementation "androidx.browser:browser:$rootProject.ext.browserVersion"
-    implementation "androidx.core:core:$rootProject.ext.androidxCoreVersion"
-    implementation "androidx.constraintlayout:constraintlayout:$rootProject.ext.constraintLayoutVersion"
-    //For Executive Order work
-    implementation "com.yubico.yubikit:android:$rootProject.ext.yubikitAndroidVersion"
-    implementation "com.yubico.yubikit:piv:$rootProject.ext.yubikitPivVersion"
-    //For passkeys
-    implementation "androidx.credentials:credentials:$rootProject.ext.AndroidCredentialsVersion"
-    //needed for credentials support from play services, for devices running
-    implementation "androidx.credentials:credentials-play-services-auth:$rootProject.ext.AndroidCredentialsVersion"
-    implementation "com.google.android.gms:play-services-fido:$rootProject.ext.LegacyFidoApiVersion"
-    implementation "com.google.android.libraries.identity.googleid:googleid:$rootProject.ext.GoogleIdVersion"
-    implementation "com.github.stephenc.jcip:jcip-annotations:$rootProject.ext.jcipAnnotationVersion"
-
-    compileOnly "com.github.spotbugs:spotbugs-annotations:$rootProject.ext.spotBugsAnnotationVersion"
-
-    compileOnly "org.projectlombok:lombok:$rootProject.ext.lombokVersion"
-    annotationProcessor "org.projectlombok:lombok:$rootProject.ext.lombokVersion"
 
     // Test dependencies
     // Needed to resolve JSONObject inside of non-instrumented tests
@@ -302,9 +255,6 @@ dependencies {
         exclude group: 'com.android.support', module: 'support-annotations'
     })
 
-    implementation "io.opentelemetry:opentelemetry-api:$rootProject.ext.openTelemetryVersion"
-    implementation("io.opentelemetry:opentelemetry-extension-kotlin:$rootProject.ext.openTelemetryExtensionKotlinVersion")
-    implementation "androidx.fragment:fragment:1.3.2"
 }
 
 // Create tasks to generate javadoc

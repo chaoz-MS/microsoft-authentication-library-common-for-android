@@ -22,6 +22,9 @@ rootProject.name = "com.microsoft.identity"
 include(':common-ext')
 project(':common-ext').projectDir = new File('common-ext')
 
+include(':common-sys-webview')
+project(':common-sys-webview').projectDir = new File('common-sys-webview')
+
 include(':common')
 project(':common').projectDir = new File('common')
 

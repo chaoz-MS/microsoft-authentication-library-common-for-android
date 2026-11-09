@@ -36,6 +36,17 @@ allprojects {
         mavenCentral()
         google()
         mavenLocal()
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name 'Duo-SDK-Feed'
+                    url 'https://pkgs.dev.azure.com/MicrosoftDeviceSDK/DuoSDK-Public/_packaging/Duo-SDK-Feed/maven/v1'
+                }
+            }
+            filter {
+                includeModule('com.microsoft.device.display', 'display-mask')
+            }
+        }
         maven {
             name "vsts-maven-adal-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1"
