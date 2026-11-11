@@ -31,6 +31,7 @@ import com.microsoft.identity.common.java.dto.IdTokenRecord;
 import com.microsoft.identity.common.java.exception.ClientException;
 import com.microsoft.identity.common.java.interfaces.IPlatformComponents;
 import com.microsoft.identity.common.java.opentelemetry.AttributeName;
+import com.microsoft.identity.common.java.opentelemetry.OTelUtility;
 import com.microsoft.identity.common.java.opentelemetry.SpanExtension;
 import com.microsoft.identity.common.java.providers.microsoft.MicrosoftAccount;
 import com.microsoft.identity.common.java.providers.microsoft.MicrosoftRefreshToken;
@@ -67,8 +68,9 @@ public class BrokerOAuth2TokenCacheTelemetryWrapper
     public BrokerOAuth2TokenCacheTelemetryWrapper(@NonNull final IPlatformComponents mPlatformComponents,
                                                   int uid,
                                                   @NonNull IBrokerApplicationMetadataCache applicationMetadataCache,
-                                                  @NonNull final BrokerOAuth2TokenCache cacheToWrap) {
-        super(mPlatformComponents, uid, applicationMetadataCache);
+                                                  @NonNull final BrokerOAuth2TokenCache cacheToWrap,
+                                                  final boolean callerAuthorizedForFoci) {
+        super(mPlatformComponents, uid, applicationMetadataCache, callerAuthorizedForFoci);
         mCacheToWrap = cacheToWrap;
     }
 
@@ -202,17 +204,12 @@ public class BrokerOAuth2TokenCacheTelemetryWrapper
 
     @Override
     public AccountRecord getAccountByLocalAccountId(String environment, String clientId, String localAccountId) {
-        final long startTime = System.currentTimeMillis();
-
+        final long startTimeInNanos = System.nanoTime();
         try {
             return mCacheToWrap.getAccountByLocalAccountId(environment, clientId, localAccountId);
         } finally {
-            final long endTime = System.currentTimeMillis();
-            final long elapsedTime = endTime - startTime;
-            SpanExtension.current().setAttribute(
-                    AttributeName.elapsed_time_cache_get_account_by_local_account_id.name(),
-                    elapsedTime
-            );
+            OTelUtility.recordElapsedTimeFromNanos(AttributeName.elapsed_time_cache_get_account_by_local_account_id.name(),
+                    startTimeInNanos);
         }
     }
 
@@ -374,5 +371,23 @@ public class BrokerOAuth2TokenCacheTelemetryWrapper
                     elapsedTime
             );
         }
+    }
+
+    // Delegate FoCI-cache reads/authorization to the wrapped instance so the caller-authorized
+    // gate configured at construction of mCacheToWrap is honored. Without these overrides the
+    // wrapper's own (default-true) authorization state would apply (AB#3687466).
+    @Override
+    public List<ICacheRecord> getFociCacheRecords() {
+        return mCacheToWrap.getFociCacheRecords();
+    }
+
+    @Override
+    public List<AccountRecord> getAccounts() {
+        return mCacheToWrap.getAccounts();
+    }
+
+    @Override
+    public boolean isCallerAuthorizedForFoci() {
+        return mCacheToWrap.isCallerAuthorizedForFoci();
     }
 }

@@ -1,7 +1,211 @@
 vNext
 ----------
+
+Version 24.7.0
+----------
+- [MINOR] Add Native Auth V2 sign-in support for password first factor and password followed by email OTP MFA, including server-driven method selection, continuation commands, controller orchestration, and token completion (AB#3729067) (#3239)
+- [PATCH] Upgrade Apache HttpCore to 5.4.3 to address CVE-2026-54399 (AB#3746140) (#3242)
+- [PATCH] Enable OAEP with SHA and MGF1 padding by default when ECS configuration is unavailable (#3205)
+- [MINOR] Add the InstallCertActivity span name, distinct from InstallCertOnWpj which names the DRS request rather than the activity hosting it (AB#3733722) (#3241)
+- [MINOR] Carry the executing broker package and battery optimization exemption status across modern MSAL acquire-token-silent success and error results (AB#3731177) (#3236)
+- [MINOR] Add FociQueryOutcome and FociQueryUtilities.queryFociMembership, a classified result for the FoCI membership query, so callers can tell a definitive non-membership response apart from a transient or refresh-token-specific failure. The existing tryFociTokenWithGivenClientId overloads are unchanged in behaviour and now delegate to it (#3234)
+- [PATCH] Retry the Outlook account drawer lookup in OutlookApp.confirmAccount so a transient popup (teaching callout or modal dialog) can't fail the check (#3231)
+- [MINOR] Add the broker telemetry schema data model, event collector, provider interfaces, and serialization helpers for flight-gated broker execution telemetry (#3095)
+- [PATCH] Migrate the Native Auth E2E test email provider from 1secmail to authenticated Mail.tm (#3219)
+- [MINOR] Security: validate a PKeyAuth WebView-redirect SubmitUrl (attacker-controllable) as an HTTPS URL same-origin with the challenging endpoint before the device key signs or the WebView submits; flight-gated and ships in shadow mode (CWE-918 / AB#3706623)
+- [MINOR] Reenable the GetCookies WebApps API contract for broker discovery (#3230)
+- [MINOR] Add the IPC transport for broker telemetry: the client opts in by putting a serialized BrokerTelemetryRequest (correlation ID and schema version) under BROKER_TELEMETRY_REQUEST on the operation bundle, where the key's presence is the opt-in signal, the broker returns the collected BrokerIpcTelemetry payload under BROKER_IPC_TELEMETRY on the response bundle, and MsalBrokerResultAdapter deserializes it through a strict TypeAdapterFactory that rejects payloads missing required root, performance-record or execution-event fields. An EventTag name this client does not recognise degrades that single event to the new EventTag.Unknown sentinel instead of leaving null in a non-nullable field, keeping the rest of the timeline intact; a non-string tag is malformed and still rejects the payload. Also renames the unreleased EventTag constants CommonHttpRequestExecute and CommonHttpResponseReceived to CommonTokenRequestExecute and CommonTokenResponseReceived (#3232)
+- [MINOR] Bump Kotlin to 2.0.21 with languageVersion/apiVersion pinned to 1.9, so published metadata stays readable by consumers on Kotlin 1.8 and -Xskip-metadata-version-check is no longer needed (#3238)
+- [MINOR] Add an IFidoManagerProvider extension point so a host can fulfil WebView passkey challenges, with Credential Manager as the fallback, and pass the auth flow's correlation id to IFidoManager.authenticate (#3237)
+
+Version 24.6.0
+----------
+- [PATCH] Remove the USE_LOCKS_IN_NAME_VALUE_STORAGE flight and always use per-storage read/write locks in NameValueStorageFileManagerSimpleCacheImpl
+- [PATCH] Security (CWE-918): stop the sso_nonce WebView redirect handler (NonceRedirectHandler) from forwarding the PRT credential header (x-ms-RefreshTokenCredential) to untrusted or cleartext redirect targets; only forward to validated HTTPS AAD cloud hosts and otherwise load the page without the credential, gated by ENABLE_NONCE_REDIRECT_CREDENTIAL_HEADER_VALIDATION CommonFlight (default on) (#3199)
+- [MINOR] Add GET_DEVICE_TOKEN_V1 protocol with required clientId and redirectUri, exposed as DeviceRegistrationClientApplication.getDeviceTokenResult returning the full token response (access token, device info, token type, resource, expiry fields). Deprecate getDeviceToken in favour of it (#3147)
+- [MINOR] Add the Native Auth V2 platform foundation in common4j: HAL response model and parser, typed challenge/poll/verify/token request and response contracts, href validation before continuation state or user input is sent, and V2 request construction, response handling, and HTTP client support (AB#3693580) (#3220)
+- [MINOR] Add Native Auth password-reset SSPR V2 protocol, continuation, command, controller, result, and telemetry support across Common and Common4J (#3221)
+- [PATCH] Remove the abandoned CALL_REFACTORED_SAVE_AND_LOAD_AGGREGATED_ACCOUNT_METHOD flight and its unused optimized cache save-and-load implementation (#3218)
+- [PATCH] Improve Auth Tab / browser-selection logging and add browser-package-missing error string (#3191)
+- [MINOR] Add QR+PIN preference and camera-permission flow telemetry to android_spans (#3202)
+- [MINOR] Add GET_DEVICE_TOKEN_V1 protocol with required clientId and redirectUri, exposed as DeviceRegistrationClientApplication.getDeviceTokenResult returning the full token response (access token, device info, token type, resource, expiry fields) (#3147)
+- [MINOR] MAM Conditional Access onboarding (Phase 1): tag the Company Portal install link with the calling app package as the Play install referrer when the server has not already named one, so Company Portal skips its own sign-in UX and redirects back to the caller after install; scoped to redirects marked intuneAppProtection=1 and enabled by the host SDK through AuthorizationActivityParameters.enableMamCaInstallReferrer (default off) (#3193, #3212)
+- [PATCH] Security: reject silent broker token requests whose request-bundle caller package is not owned by the kernel-attested calling uid (Binder.getCallingUid()), via the caller-validating IPlatformUtil.isValidCallingApp(redirectUri, packageName, callingUid) overload (AndroidPlatformUtil) invoked from BrokerSilentTokenCommandParameters.validate() (unknown_caller). Gated by the VALIDATE_SILENT_CALLER CommonFlight (default on) as a secure-by-default kill-switch; validates the broker-attested callerUid (AB#3687466) (#3198)
+- [MINOR] Deprecate IPlatformUtil.isValidCallingApp(String, String) in favor of the caller-validating isValidCallingApp(String, String, int) overload for the silent broker path; the two-argument overload is retained for the interactive path and flows without an OS-attested per-app caller uid (AB#3687466) (#3198)
+- [PATCH] Fix a lock-ordering deadlock in AndroidKeyStoreUtil by removing the redundant `synchronized` from applyKeyStoreLocaleWorkarounds() (#3208)
+- [MINOR] Attach an immutable, one-shot return PendingIntent to the openid-vc:// hand-off so a signature-pinned Microsoft Authenticator (VID wallet) can bring the calling app's task back to the foreground after VID completes, via a transparent no-history OpenIdVcReturnActivity trampoline; gated by ENABLE_OPEN_ID_VC_RETURN_TO_CALLER CommonFlight (default on) (#3184)
+- [MINOR] Promote finalizeBlob() onto the IOnboardingTelemetryRecorder interface (as a binary-compatible default method) so callers finalize the onboarding telemetry blob through the interface instead of downcasting to the concrete OnboardingTelemetryRecorder (#3180)
+- [PATCH] Security: validate the target of WebView broker-install intent-scheme redirects against an allow-list (Google Play Store only), clearing any explicit component/selector and stripping URI-permission grant flags so resolution is driven solely by the validated package; gated by ENABLE_BROKER_INSTALL_INTENT_VALIDATION CommonFlight (default off) and recording the launched / blocked outcome via the is_broker_install_intent_blocked span attribute (#3170)
+- [PATCH] Rename WebAppError 'error' field to 'code' in WebApps API error response (#3192)
+- [MINOR] Add BrokerOAuth2TokenCache callerAuthorizedForFoci constructor gate: when false, shared FoCI cache reads are suppressed across both env-scoped and env==null chokepoints (getTokenCachesForClientId, getTokenCacheForClient), all loader/silent-flow fallbacks (load, loadWithAggregatedAccountData, saveAndLoadAggregatedAccountDataOptimized, loadAggregatedAccountData — the last returns a sparse singleton so downstream get(0) still resolves to UI-required), and device-wide enumerations (getAccounts(), getFociCacheRecords). Caller's own UID-partitioned accounts always returned. Exposes isCallerAuthorizedForFoci() and BrokerOAuth2TokenCacheTelemetryWrapper delegates the FoCI-touching APIs to the wrapped instance. The 3-arg convenience constructor (which silently defaulted the gate to true) is removed so every production callsite must supply the gate explicitly and fail-open regressions surface at compile time (#3187)
+- [MINOR] Add a non-mutating log_telemetry action to the Auth UX JavaScript bridge that forwards a validated, page-reported server error code to an onboarding telemetry sink seam, kept strictly separate from the number-matching device-store path (#3197)
+
+Version 24.5.0
+----------
+- [PATCH] Security: match redirect URI and switch_browser routing by scheme + authority + path instead of String#startsWith to prevent prefix-confusion auth-code leakage; gated by ENABLE_STRICT_REDIRECT_URI_MATCHING CommonFlight (default on) (#3136)
+- [MINOR] Add OnboardingBlockingErrorParser bridging x-ms-clitelem and OAuth error_codes into the onboarding telemetry blob, with non-onboarding AADSTS filtering and a multi-value Path B overload (#3122)
+- [PATCH] Move SwitchBrowser cloud discovery off the WebView main thread to prevent NetworkOnMainThreadException; consolidate SwitchBrowserChallenge and SwitchBrowserRequestHandler into SwitchBrowserProtocolCoordinator (#3173)
+- [PATCH] Invalidate active broker cache if the cached broker no longer supports the configured IPC strategy (e.g. broker reverted to stub via MDM policy) (#3175)
+- [PATCH] Bump WrappedSecretKeySerializerVersion flight default to 1, switching WrappedSecretKey serialization to the metadata-aware format by default (#3176)
+- [PATCH] Fix KeyStore key generation failures on API <= 30 by adding a conservative RSA/PKCS1/SHA-256 spec (ECS kill-switch flighted) (#3167)
+- [PATCH] Add moshi-adapters dependency to Common module so downstream consumers like OneAuth do not have to add it explicitly (#3168)
+- [MINOR] Add flighted request-origin (host) display to the HTTP auth dialog, with input sanitization and OTel telemetry; default OFF via EnableHttpAuthOriginDisplay flight (#3171)
+- [PATCH] Harden Authority.isKnownAuthority() to use exact, case-insensitive host matching for developer-configured known authorities (#3165)
+- [PATCH] Exempt the Intune package from the multiple-apps-listening browser redirect validation to support COBO/COPE/AM API BYOD locked-down scenarios (#3177)
+- [PATCH] Record root-cause telemetry (secret_key_wipe_reason, secret_key_read_root_cause, keystore_numeric_error_code, keystore_error_transience) on KeyStore secret-key wipes/re-keys to diagnose cache-wipe data loss, without changing wipe behavior (#3174)
+
+Version 24.4.0
+----------
+- [PATCH] Improve switch browser error handling and telemetry: standardize result delivery via setResultAndFinish, add error bundles for all failure paths, fix span/scope lifecycle, and move RESUME_REQUEST to shared SWITCH_BROWSER constants (#3134)
+- [PATCH] Fix incorrect Chrome Dev (com.chrome.dev) signing certificate thumbprint in AppRegistry (#3153)
+- [MINOR] Add IS_SWITCH_BROWSER_FLOW flag to PropertyBag so OneAuth can detect when the switch browser protocol was used during interactive auth (#3145)
+- [MINOR] Add Microsoft Defender for Endpoint (MDE) to AppRegistry authorized app lists (GET_DEVICE_TOKEN, DEVICE_REGISTRATION) (#3149)
+- [MINOR] OnboardingTelemetryRecorder.finalizeBlob() emits the populated blob whenever a valid sessionCorrelationId is present (previously returned empty when blockingErrors was empty) (#3148)
+- [PATCH] Change SWITCH_BROWSER_PROTOCOL_REQUIRES_STATE flight default to true - overridden by Broker to false (#3144)
+- [MINOR] Add enableSwitchBrowser opt-in param to AuthorizationActivityFactory/Parameters so consumers (OneAuth) can signal switch_browser=1 when a compatible browser is available (#3137)
+- [PATCH] Remove stale code, eliminate flickers due to BrokerAuthorizationActivity (#3139)
+- [MINOR] Add SwitchBrowserRedirectActivity for non-broker Switch Browser protocol flows. BrokerBrowserRedirectActivity now extends this shared base class (#3133)
+- [PATCH] Update OpenTelemetry to 1.62.0 (#3125)
+- [MINOR] Disabling GetCookies API from webapps APIs (#3135)
+- [MINOR] Enable passkey registration by default in CommonFlight (ENABLE_PASSKEY_REGISTRATION) (#3132)
+- [MINOR] Add NativeAuthRequestInterceptor for custom per-request headers in native auth flows (#3112)
+
+Version 24.3.0
+----------
+- [PATCH] Fix Token Endpoint Server Telemetry Parsing (#3128)
+- [PATCH] Emit ipc_strategy telemetry attribute for successful device registration IPC strategy and refactor execute flow to pack protocol request once before strategy retries (#3124)
+- [PATCH] Fix Edge browser selection on devices where Microsoft Edge is the default browser: add the rotated Edge signing certificate hash to the Edge BrowserDescriptor and accept multi-signer browsers when any signature intersects the safelist, instead of requiring strict set-equality (resolves MSAL #2414)
+- [MINOR] Refactor Auth Tab integration to use provider-based strategy selection. Adds AuthTabStrategyProvider and BrowserLaunchStrategy with Custom Tabs fallback. Compatible with androidx.browser:browser:1.7.0.
+- [MINOR] Wire onboarding telemetry hooks into AzureActiveDirectoryWebViewClient for page-transition step capture (broker install, MDM enrollment, Company Portal launch, MFA linking) and last-loaded-domain tracking (#3121)
+- [MINOR] Propagate the onboarding telemetry blob through the broker failure path: add BaseException.onboardingBlob and round-trip it through MsalBrokerResultAdapter so callers can emit onboarding telemetry on failure outcomes. Also add an MsalBrokerResultAdapter overload that accepts an onboarding blob on the success path so the broker can attach the finalized blob to the success result bundle (#3123)
+- [MINOR] Add provisionResourceAccountCredentials API to DeviceRegistrationClientApplication with V0 protocol params/response and add IPPhone to AppRegistry (#3086)
+- [PATCH] Extend filter-then-clone optimization to deleteAccessTokensWithIntersectingScopes and add telemetry attributes (#3114)
+- [PATCH] Wire ClientDataInfo through AcquireTokenResult, exceptions (#3109)
+- [MINOR] Add additional step ID and blocking error constants for full onboarding telemetry coverage (#3117)
+- [PATCH] Handle app_link Intent redirection by validating broker install links and rejecting unsupported redirect URIs with appropriate error responses (#3102)
+- [MINOR] Add onboarding telemetry blob fields to BrokerRequest/BrokerResult and command parameters for client↔broker IPC transport (#3111)
+- [PATCH] Extend filter-then-clone optimization to load() and getIdTokensForAccountRecord() in MsalOAuth2TokenCache: when ENABLE_FILTER_THEN_CLONE_IN_MEMORY_CACHE flight is enabled, skip clone-all preload and call direct flight-gated overloads that clone only matching credentials; add new getCredentialsFilteredBy overload with kid support (#3100)
+- [MINOR] Add onboarding telemetry recorder, field keys, and session persistence for mobile onboarding flow (#3088)
+- [PATCH] Move Multiple Listening apps check to the authorization layer (#3070)
+- [PATCH] Edge TB: Fix lookup mode (#3108)
+
+Version 24.2.0
+----------
+- [PATCH] Add support for Authenticator app activation links in WebView, enabling account pairing/MFA flows to launch Microsoft Authenticator directly instead of redirecting to the Play Store (#3090)
+- [PATCH] Fix: WPJ's BrokerDiscovery cache crash due to shared predefined encryption key with MSAL (#3081)
+- [PATCH] Fix ABBA deadlock between AzureActiveDirectory and AzureActiveDirectoryAuthority class monitors by extracting polymorphic getAuthorityURL() calls outside synchronized scopes and removing unnecessary synchronized from ConcurrentHashMap read-only methods (#3082)
+- [PATCH] Optimize AcquireTokenSilent save path: replace keySet() decrypt-all with in-memory map lookup in removeAccount()/removeCredential(), add telemetry for deleteAccessTokensWithIntersectingScopes, and remove unused elapsed_time_save_account_shared_preferences attribute (#3074)
+- [MINOR] Add DeviceRegistrationClientApplication as public API for OneAuth device registration with mandatory correlationId, DeviceState and DrsDiscoveryEndpoint enums (#3073)
+- [MINOR] Move device registration protocol types, domain types, controller, and packer from broker to common to enable OneAuth device registration support (#3066)
+- [MINOR] Upgrade compileSdkVersion to 36 and buildToolsVersion to 36.0.0 (#3065)
+- [PATCH] Rename SovSG to GovSG for the Singapore sovereign cloud identifiers (#3068)
+- [MINOR] Add CancellationSignal to gracefully cancel in-flight HTTP requests on ATS command-level timeout, preventing zombie worker threads from holding thread pool slots (#3055)
+
+Version 24.1.1
+----------
+- [PATCH] Fix ABBA deadlock between AzureActiveDirectory and AzureActiveDirectoryAuthority class monitors by extracting polymorphic getAuthorityURL() calls outside synchronized scopes and removing unnecessary synchronized from ConcurrentHashMap read-only methods (#3083)
+
+Version 24.1.0
+----------
+- [MINOR] Add sovereign cloud (Bleu/Delos/SovSG) instance discovery support with pre-seeded cloud metadata, cache-aware discovery routing, and ensureCloudDiscoveryForAuthority API (#3027)
+- [PATCH] Fix bug in Authority.getKnownAuthorityResult where cloud discovery failure would skip knownAuthorities check and fix thread safety in Authority.isKnownAuthority and getEquivalentConfiguredAuthority with synchronized block (#3027)
+- [MINOR] Add helper method in the PackageHelper class for BrokerDiscovery (#3044)
+- [MINOR] Use tdbr claim to route telemetry traffic to EU region (#2679)
+- [PATCH] Remove back button interception from SilentWebViewAuthorizationFragment (#3030)
+- [MINOR] Add AIDL interface for device registration service.(#2926)
+- [MINOR] Move debugIntuneCE and prodIntuneCE from BrokerData to AppRegistry as App instances (#3012)
+- [MINOR] Remove LruCache from SharedPreferencesFileManager (#2910)
+- [MINOR] Edge TB: Claims (#2925)
+- [PATCH] Update Moshi to 1.15.2 to resolve okio CVE-2023-3635 vulnerability (#3005)
+- [MINOR] Edge TB: PoP support (#3006)
+- [MINOR] Handle target="_blank" links in authorization WebView (#3010)
+- [MINOR] Handle openid-vc urls in webview (#3013)
+- [MINOR] Add WebView file upload support (#3022)
+- [MINOR] Enhance WebAuthn telemetry for passkey registration (#3018)
+- [MINOR] Enabled opening of TLR URLs in browser by default by enabling the flight ENABLE_WEBVIEW_MULTIPLE_WINDOWS (#3042)
+
+Version 24.0.1
+----------
+- [PATCH] Allow apps to setShouldTrustDebugBrokers (#2932)
+
+Version 24.0.0
+----------
+- [MINOR] Add Telemetry Constants for browser sso (#2904)
+- [MINOR] Add tracking for urls loaded by our webview (#2892)
+- [MINOR] Rework OpenTelemetry spans for secret key generation and retrieval operations (#2869)
+- [MAJOR] add isBrokerProcess to IPlatformUtil (#2882)
+- [MINOR] Remove OpenTelemetry from keep rules (#2881)
+- [MINOR] Adding ExtraQueryStringParametersForWebApps (#2891)
+- [MINOR] Added flight-controlled option to enable Broker CommandDispatcher silent thread pool size based on processor count and default to 12 threads (#2897)
+- [MINOR] Edge TB: Allow For Lookup Mode (#2898)
+
+Version 23.3.0
+----------
+- [MINOR] Introduce AppRegistry and refactor calling app validation (#2872)
+- [MINOR] Add attributes that calculate elapsed_times using nanos (#2871)
+- [MINOR] Cleanup code related to emitting ests telemetry (#2868)
+- [MINOR] Skip account aggregation when responding to AcquireTokenSilent api call for OneAuth (#2863)
+- [MINOR] Introduce locks at NameValueStorageFileManagerSimpleCacheImpl layer (#2842)
+- [MINOR] Add flight-controlled option to expand Broker CommandDispatcher silent thread pool to 8 threads (default remains 5; MSAL clients unaffected) (#2865)
+- [PATCH] Implement State-Based Timeout Classification for Silent Token Requests (#2870)
+- [MINOR] Added Authentication Constants to be used for broker version and name (#2859)
+- [PATCH] Adding WebAppsNonce to JWT request body (#2867)
+- [MINOR] Fixed CommandDispatcherTest to avoid race condition (#2875)
+
+Version 23.2.0
+
+- [MINOR] Add additional allowed origins for PasskeyWebListener (#2839)
+- [PATCH] Add JavascriptInterface rules to consumer proguard rules (#2837)
+- [MINOR] Add optimized saveAndLoadAggregatedAccountData method in BrokerOAuth2TokenCache (#2832)
+- [MINOR] Remove MavenCentral repository from build.gradle files (#2830)
+- [MINOR] Determine whether broker app opts out from battery optimization (#2819)
+- [MINOR] Cache Active Broker In Memory (BrokerDiscoveryClient) (#2817)
+- [MINOR] Enable Broker Discovery by default in MSAL/Broker API (#2818)
+- [MINOR] Fix for SDL violation in device pop scenarios, Fixes AB#3284510 (#2744)
+- [MINOR] Adds Authentication Constants to be used for broker latency timestamp in response (#2831)
+- [MINOR] Updating broker protocol version; updating parameter attributes (extraTokenBodyParameters and webAppsNonce) (#2848)
+- [MINOR] Implemented Common logic to retrieve broker latency duration from result Broker Bundle (#2835)
+- [MINOR] Add support for WebApps getToken API (#2803)
+- [MINOR] Added telemetry to capture the DRSNonce call (#3302)
+
+Version 23.1.1
+-----------
+- [PATCH] Share SharedPreferencesInMemoryCache across instances of BrokerOAuth2TokenCache (#2813)
+- [PATCH] Use SharedPreferencesInMemoryCache implementation in Broker (#2802)
+
+Version 23.1.0
+----------
+- [MINOR] Add OpenTelemetry support for passkey operations (#2795)
+- [MINOR] Add passkey registration support for WebView (#2769)
+- [MINOR] Add callback for OneAuth for measuring Broker Discovery Client Perf (#2796)
+- [MINOR] Add new span name for DELEGATION_CERT_INSTALL's telemetry (#2790)
+- [MINOR] Refactor getAccountByLocalAccountId (#2781)
+- [MINOR] Add OTel Benchmarker (#2786)
+- [MINOR] WebApps AccountId Registry (#2787)
+- [MINOR] Take flight value for whether to show webcp flow in weview or not in brokerless scenarios. (#2784)
+- [MINOR] getAllSsoTokens method for Edge (#2774)
+- [MINOR] WebApps AccountId Registry (#2787)
+- [MINOR] Expose WebApps APIs (#2793)
+- [MINOR] Add domainHint support to authorization request (#2792)
+- [PATCH] Fix auth method blocked error handling (#2804)
+
+Version 23.0.2
+----------
+- [MAJOR] Add KeyStoreBackedSecretKeyProvider (#2674)
+- [MINOR] Add Open Id configuration issuer validation reporting in OpenIdProviderConfigurationClient (#2751)
+- [MINOR] Add helper method to record elapsed time (#2768)
+- [MINOR] Implement TenantUtil (#2761)
+- [MAJOR] Update proguard rules in common (#2756)
 - [MINOR] Add query parameter for Android Release OS Version (#2754)
 - [MINOR] Add client scenario to JwtRequestBody (#2755)
+- [MINOR] Awaiting MFA Delegate now automatically returns the AuthMethods to be used when calling MFA Challenge (#2764)
+- [MINOR] SDK now handles SMS as strong authentication method #2766
+- [MINOR] Added error handling when webcp redirects have browser protocol #2767
+- [PATCH] Fix for app link redirect from CCT due to forced browser preference (#2775)
+
+Version 22.1.3
+----------
+- [PATCH] Don't set browser pkg name in CustomTabIntent (#2777)
 
 Version 22.1.0
 ----------
@@ -537,6 +741,7 @@ Version 6.0.0
 - [PATCH] Added Base64 encode for the AuthorizationRequest state parameter (#1750)
 - [PATCH] Fix missing authority_url when creating the authority audience (#1753)
 - [PATCH] Add filter for broker telemetry event fields. (#1793)
+- [MINOR] Bug fix : Selecting text in login page is causing the input field to be hidden (#2826)
 
 Version 5.0.1
 ----------

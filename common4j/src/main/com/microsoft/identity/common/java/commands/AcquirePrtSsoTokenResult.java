@@ -35,7 +35,7 @@ import lombok.experimental.Accessors;
 /**
  * A DTO for the results from an AcquirePrtSsoToken request.
  */
-@Builder
+@Builder(toBuilder = true)
 @Getter
 @Accessors(prefix = "m")
 public class AcquirePrtSsoTokenResult {
@@ -88,5 +88,11 @@ public class AcquirePrtSsoTokenResult {
      */
     @SerializedName("telemetry")
     private final @NonNull Map<String, Object> mTelemetry;
+
+    /**
+     * The time when the token was acquired, in milliseconds since epoch.
+     */
+    @SerializedName("acquisitionTimeMillis")
+    private final @Nullable Long mAcquisitionTimeMillis;
 
 }

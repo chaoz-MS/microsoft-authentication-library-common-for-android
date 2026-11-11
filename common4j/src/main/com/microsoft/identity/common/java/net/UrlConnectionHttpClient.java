@@ -48,30 +48,24 @@ import net.jcip.annotations.ThreadSafe;
 
 import java.io.BufferedReader;
 import java.io.Closeable;
-import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.ConnectException;
 import java.net.HttpURLConnection;
-import java.net.NoRouteToHostException;
-import java.net.ProtocolException;
-import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.URL;
-import java.net.UnknownHostException;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 
 import javax.annotation.Nullable;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLSocketFactory;
 
 import io.opentelemetry.api.trace.Span;
@@ -197,8 +191,8 @@ public class UrlConnectionHttpClient extends AbstractHttpClient {
                                 }
                             })
                             .initialDelay(RETRY_TIME_WAITING_PERIOD_MSEC)
-                            .isRetryable(new Function<HttpResponse, Boolean>() {
-                                public Boolean apply(HttpResponse response) {
+                            .isRetryable(new BiFunction<HttpResponse,Integer, Boolean>() {
+                                public Boolean apply(HttpResponse response, Integer attemptNumber) {
                                     return response != null && isRetryableError(response.getStatusCode());
                                 }
                             })
@@ -357,12 +351,53 @@ public class UrlConnectionHttpClient extends AbstractHttpClient {
     }
 
     private HttpResponse executeHttpSend(HttpRequest request, Consumer<HttpResponse> completionCallback) throws ClientException {
+        final HttpURLConnection urlConnection;
         try {
-            final HttpURLConnection urlConnection = setupConnection(request);
+            urlConnection = setupConnection(request);
+        } catch (final IOException e) {
+            Logger.warn(TAG, "IOException occurred during setupConnection");
+            throw ConnectionError.getClientException(e);
+        }
+
+        // Get the cancellation signal for this worker thread (if any).
+        // This is set by CommandDispatcher before executeCommand() is called.
+        final CancellationSignal cancellationSignal = CancellationSignal.getCurrentThreadSignal();
+
+        // Store the disconnect action so we can pass the same instance to unregisterOnCancel.
+        final Runnable disconnectAction = (cancellationSignal != null) ? urlConnection::disconnect : null;
+
+        // Register the connection's disconnect as the cancel action for command-level timeout.
+        // If already cancelled (caller timed out while we were queued), abort immediately.
+        if (cancellationSignal != null
+                && !cancellationSignal.registerOnCancel(disconnectAction)) {
+            // Emit HTTP end telemetry to match the HttpStartEvent — response is null (no I/O happened)
+            completionCallback.accept(null);
+            throw new ClientException(
+                ClientException.TIMED_OUT,
+                "Request cancelled before HTTP execution due to command-level timeout");
+        }
+
+        try {
             sendRequest(urlConnection, request.getRequestContent(), request.getRequestHeaders().get(HttpConstants.HeaderField.CONTENT_TYPE));
             return getHttpResponse(completionCallback, urlConnection);
-        }  catch (final IOException e) {
+        } catch (final IOException e) {
+            // Check if this IOException was caused by cancellation (disconnect()).
+            // HttpURLConnection.disconnect() causes SocketException on blocked I/O.
+            if (cancellationSignal != null && cancellationSignal.isCancelled()) {
+                // Emit HTTP end telemetry to match the HttpStartEvent — response is null (cancelled mid-I/O)
+                completionCallback.accept(null);
+                throw new ClientException(
+                    ClientException.TIMED_OUT,
+                    "Request cancelled due to command-level timeout",
+                    e);
+            }
             throw ConnectionError.getClientException(e);
+        } finally {
+            // Unregister cancel action — either we're done or an exception was thrown.
+            // This prevents cancel() from disconnecting a potentially-reused connection.
+            if (cancellationSignal != null) {
+                cancellationSignal.unregisterOnCancel(disconnectAction);
+            }
         }
     }
 
@@ -380,10 +415,16 @@ public class UrlConnectionHttpClient extends AbstractHttpClient {
                 throw e;
             } catch (final IOException ioException) {
                 // 404, for example, will generate an exception.  We should catch it.
+                Logger.warn(TAG, "IOException while reading response stream: "
+                        + ioException.getClass().getSimpleName());
                 responseStream = urlConnection.getErrorStream();
             }
 
             final int statusCode = urlConnection.getResponseCode();
+            if (statusCode == -1) {
+                Logger.warn(TAG, "Received an unparseable HTTP status line (statusCode=-1) for "
+                        + urlConnection.getRequestMethod() + " request.");
+            }
 
             final Date date = new Date(urlConnection.getDate());
 

@@ -25,6 +25,7 @@ package com.microsoft.identity.common.internal.broker
 import android.content.Context
 import com.microsoft.identity.common.BuildConfig
 import com.microsoft.identity.common.adal.internal.AuthenticationConstants
+import com.microsoft.identity.common.java.broker.IAppIdentity
 import com.microsoft.identity.common.java.logging.Logger
 import java.util.Collections
 
@@ -37,14 +38,16 @@ import java.util.Collections
  * @param nickName                      Nickname of this [BrokerData] object.
  *                                      If set, this will be printed when toString() is invoked.
  */
-data class BrokerData(val packageName : String,
-                      val signingCertificateThumbprint : String,
-                      private val nickName: String?) {
-    constructor(packageName: String, signingCertificateThumbprint: String):
-                this(packageName, signingCertificateThumbprint, null)
+data class BrokerData(
+    override val packageName: String,
+    override val signingCertificateThumbprint: String,
+    override val nickName: String?,
+) : IAppIdentity {
+    constructor(packageName: String, signingCertificateThumbprint: String) :
+            this(packageName, signingCertificateThumbprint, null)
 
     override fun equals(other: Any?): Boolean {
-        if (other !is BrokerData){
+        if (other !is BrokerData) {
             return false
         }
 
@@ -169,20 +172,6 @@ data class BrokerData(val packageName : String,
         )
 
         @JvmStatic
-        val debugIntuneCE = BrokerData(
-            AuthenticationConstants.Broker.INTUNE_APP_PACKAGE_NAME,
-            AuthenticationConstants.Broker.INTUNE_APP_SHA512_DEBUG_SIGNATURE,
-            "debugIntuneCE"
-        )
-
-        @JvmStatic
-        val prodIntuneCE = BrokerData(
-            AuthenticationConstants.Broker.INTUNE_APP_PACKAGE_NAME,
-            AuthenticationConstants.Broker.INTUNE_APP_SHA512_RELEASE_SIGNATURE,
-            "prodIntuneCE"
-        )
-
-        @JvmStatic
         val accountManagerBrokers: Set<String> =
             Collections.unmodifiableSet(object : HashSet<String>() {
                 init {
@@ -232,7 +221,7 @@ data class BrokerData(val packageName : String,
          * see [sShouldTrustDebugBrokers] for more info regarding testing.
          **/
         @JvmStatic
-        fun getKnownBrokerApps() : Set<BrokerData> {
+        fun getKnownBrokerApps(): Set<BrokerData> {
             return if (sShouldTrustDebugBrokers) allBrokers else prodBrokers
         }
 
@@ -247,7 +236,7 @@ data class BrokerData(val packageName : String,
 
         /**
          * Returns a [BrokerData] object matching the owner of the [Context].
-         * 
+         *
          * NOTE: This method does NOT perform any validation.
          * If you want to make sure that the context owner is not a malicious app, use [BrokerValidator]
          **/

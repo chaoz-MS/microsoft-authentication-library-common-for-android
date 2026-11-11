@@ -33,8 +33,6 @@ import com.microsoft.identity.common.internal.net.cache.HttpCache;
 import com.microsoft.identity.common.internal.platform.AndroidBroadcaster;
 import com.microsoft.identity.common.internal.platform.AndroidDeviceMetadata;
 import com.microsoft.identity.common.internal.platform.AndroidPlatformUtil;
-import com.microsoft.identity.common.internal.providers.oauth2.AndroidTaskStateGenerator;
-import com.microsoft.identity.common.internal.ui.AndroidAuthorizationStrategyFactory;
 import com.microsoft.identity.common.internal.ui.browser.AndroidBrowserSelector;
 import com.microsoft.identity.common.internal.util.WorkProfileUtil;
 import com.microsoft.identity.common.java.WarningType;
@@ -98,18 +96,6 @@ public class AndroidPlatformComponentsFactory {
         return create(context, null, null);
     }
 
-    /**
-     * Creates an {@link IPlatformComponents} object from an {@link Activity} and, optionally, a {@link Fragment}.
-     *
-     * @param activity an activity where an interactive session will be attached to.
-     * @param fragment a fragment where an interactive session will be attached to.
-     **/
-    public static IPlatformComponents createFromActivity(@NonNull final Activity activity,
-                                                         @Nullable final Fragment fragment) {
-
-        return create(activity.getApplicationContext(), activity, fragment);
-    }
-
     @SuppressWarnings(WarningType.rawtype_warning)
     private static IPlatformComponents create(@NonNull final Context context,
                                               @Nullable final Activity activity,
@@ -118,6 +104,29 @@ public class AndroidPlatformComponentsFactory {
 
         final PlatformComponents.PlatformComponentsBuilder builder = PlatformComponents.builder();
         fillBuilderWithBasicImplementations(builder, context, activity, fragment);
+        return builder.build();
+    }
+
+    /**
+     * Creates an {@link IPlatformComponents} object from a {@link Context},
+     * with the storage encryption manager configured to always use the Android KeyStore
+     * for encryption, ignoring any predefined key set via {@link AuthenticationSettings#setSecretKey(byte[])}.
+     * <p>
+     * This is intended for components (e.g. Device Registration API, Broker API)
+     * that should not depend on the MSAL/ADAL predefined key lifecycle.
+     *
+     * @param context an application context.
+     **/
+    public static IPlatformComponents createFromContextWithKeystoreOnlyEncryptionForStorage(
+            @NonNull final Context context) {
+        initializeGlobalStates(context);
+
+        final PlatformComponents.PlatformComponentsBuilder builder = PlatformComponents.builder();
+        fillBuilderWithBasicImplementations(builder, context, null, null);
+
+        // Override the storage supplier with a keystore-only encryption manager.
+        builder.storageSupplier(new AndroidStorageSupplier(context,
+                new AndroidAuthSdkStorageEncryptionManager(context, true)));
         return builder.build();
     }
 
@@ -139,16 +148,5 @@ public class AndroidPlatformComponentsFactory {
                 .platformUtil(new AndroidPlatformUtil(context, activity))
                 .httpClientWrapper(new DefaultHttpClientWrapper())
                 .browserSelector(new AndroidBrowserSelector(context));
-
-        if (activity != null){
-            builder.authorizationStrategyFactory(
-                            AndroidAuthorizationStrategyFactory.builder()
-                                    .context(activity.getApplicationContext())
-                                    .activity(activity)
-                                    .fragment(fragment)
-                                    .browserSelector(new AndroidBrowserSelector(context))
-                                    .build())
-                    .stateGenerator(new AndroidTaskStateGenerator(activity.getTaskId()));
-        }
     }
 }

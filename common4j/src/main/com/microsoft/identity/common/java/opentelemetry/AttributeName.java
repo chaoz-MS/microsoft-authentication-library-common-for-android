@@ -117,9 +117,41 @@ public enum AttributeName {
     application_name,
 
     /**
+     * The preferred authentication method requested by the caller (e.g. "qrpin" for QR + PIN,
+     * "none" when unset), taken from the interactive request parameters.
+     */
+    preferred_auth_method,
+
+    /**
+     * The decision path taken for a WebView camera permission request. One of:
+     * "qrpin_silent_grant", "qrpin_rationale", "qrpin_os_prompt",
+     * "default_silent_grant", "default_os_prompt".
+     */
+    camera_permission_flow,
+
+    /**
+     * Whether the device has any camera hardware (FEATURE_CAMERA_ANY). Recorded on the camera
+     * permission span; does not affect handling.
+     */
+    has_camera_hardware,
+
+    /**
+     * Outcome of a WebView camera permission request: "granted" or "denied" (OK),
+     * "superseded", "error", or "abandoned" (ERROR).
+     */
+    camera_permission_result,
+
+    /**
      * The correlation id sent from client app
      */
     correlation_id,
+
+    /**
+     * The correlation id sent from client app.
+     * This is a second attribute name to denote EUDB compliance.
+     * We will only emit this value when we have a tenant id, or when we are in unauthenticated scenarios.
+     */
+    correlation_id_v2,
 
     /**
      * Indicates if token was return from token cache
@@ -140,15 +172,33 @@ public enum AttributeName {
      * The content type of the response returned by eSTS for the request.
      */
     response_content_type,
+
     /**
      * The http status code of the operation.
      */
     http_status_code,
 
     /**
-     * The size of the silent command executor queue when starting to process an ATS request.
+     * The number of unique cacheable silent requests currently being tracked in the executing command map.
+     * This represents deduplicated commands that are either executing or waiting in the thread pool queue.
      */
     num_concurrent_silent_requests,
+
+    /**
+     * The number of tasks waiting in the silent request thread pool queue to be executed.
+     * This does not include tasks currently being executed by worker threads.
+     */
+    silent_requests_queue_size,
+    /**
+     * The size of the silent request executor pool.
+     */
+    silent_executor_pool_size,
+
+    /**
+     * The outcome of cancellation signal processing for a timed-out ATS request.
+     * Only emitted when the cancellation flight is enabled and a timeout triggers cancellation.
+     */
+    cancellation_outcome,
 
     /**
      * The time (in milliseconds) spent in executing the save method in OAuth2TokenCache.
@@ -171,9 +221,14 @@ public enum AttributeName {
     elapsed_time_cache_load_with_aggregated_account_data,
 
     /**
-     * The time (in milliseconds) spent in executing the saveAndLoadAggregatedAccountData method in OAuth2TokenCache.
+     * The time (in milliseconds) spent in executing the optimized saveAndLoadAggregatedAccountData method in OAuth2TokenCache.
      */
     elapsed_time_cache_save_and_load_aggregated_account_data,
+
+    /**
+     * The time (in milliseconds) spent in executing the deleteAccessTokensWithIntersectingScopes method in MsalOAuth2TokenCache.
+     */
+    elapsed_time_cache_delete_access_tokens_with_intersecting_scopes,
 
     /**
      * The time (in milliseconds) spent in executing the removeCredential method in OAuth2TokenCache.
@@ -234,6 +289,16 @@ public enum AttributeName {
      * The time (in milliseconds) spent in executing the getAllClientIds method in OAuth2TokenCache.
      */
     elapsed_time_cache_get_all_client_ids,
+
+    /**
+     * The total number of account records in the in-memory cache at the time of the request.
+     */
+    number_of_accounts_in_cache,
+
+    /**
+     * The total number of credential records in the in-memory cache at the time of the request.
+     */
+    number_of_credentials_in_cache,
 
     /**
      * The time (in milliseconds) spent on network when acquiring PRT.
@@ -326,6 +391,26 @@ public enum AttributeName {
     is_new_refresh_token_cred_header_attached,
 
     /**
+     * Indicates whether the sso_nonce redirect target was a trusted host (HTTPS + validated AAD
+     * cloud host) eligible to receive the PRT credential header. Boolean, non-PII (no host emitted).
+     */
+    nonce_redirect_host_trusted,
+
+    /**
+     * Indicates whether the PRT credential header(s) were stripped before loading the sso_nonce
+     * redirect because the target was untrusted while validation enforcement was on. Boolean,
+     * non-PII.
+     */
+    nonce_redirect_credential_header_stripped,
+
+    /**
+     * Indicates whether the nonce-redirect credential-header validation flight
+     * (EnableNonceRedirectCredentialHeaderValidation) was enabled when the redirect was processed.
+     * Boolean, non-PII.
+     */
+    nonce_redirect_validation_flight_enabled,
+
+    /**
      * The time (in milliseconds) spent on generating a keypair.
      */
     elapsed_time_keypair_generation,
@@ -376,6 +461,31 @@ public enum AttributeName {
     is_switch_browser_resume_handled,
 
     /**
+     * Records if the Auth Tab was used in the switch browser flow (boolean).
+     */
+    auth_tab_used,
+
+    /**
+     * Records the Android Activity result code returned by the Auth Tab in the switch browser flow (integer).
+     */
+    auth_tab_result_code,
+
+    /**
+     * Records if Auth Tab is supported for the switch browser flow (boolean).
+     */
+    is_auth_tab_supported,
+
+    /**
+     * Records if the Auth Tab fell back to custom tabs in the switch browser flow (boolean).
+     */
+    auth_tab_fallback_to_custom_tabs,
+
+    /**
+     * Records the version of the browser package handling the switch browser flow.
+     */
+    browser_version,
+
+    /**
      * The tenant id for the home tenant of the account for which PRT is required.
      */
     tenant_id,
@@ -397,16 +507,6 @@ public enum AttributeName {
      * Indicates the current broker package name processing the request.
      */
     current_broker_package_name,
-
-    /**
-     * Records if the request is a webcp authorize request.
-     */
-    is_webcp_authorize_request,
-
-    /**
-     * Records if the request is a webcp enrollment request.
-     */
-    is_webcp_enrollment_request,
 
     /**
      * Records if the webcp is enabled in webview.
@@ -435,6 +535,21 @@ public enum AttributeName {
     authux_js_operation,
 
     /**
+     * Record the Auth UX server error code forwarded by the {@code log_telemetry} bridge action, so
+     * the telemetry path is queryable in android_spans without waiting for the onboarding blob to
+     * land.
+     *
+     * <p>Set only when the telemetry sink consumes an error code. If multiple codes are consumed
+     * during a flow, this attribute contains the last consumed code.
+     *
+     * <p>"Consumed" means the sink took responsibility for the code, which includes deliberately
+     * dropping it by its own policy — so this reflects what the page reported and the sink accepted,
+     * not necessarily what the onboarding blob ultimately stores. Do not treat it as a mirror of
+     * {@code blocking_errors}.
+     */
+    authux_js_error_code,
+
+    /**
      * Record whether or not the request stored a number match entry.
      */
     stored_number_match_entry,
@@ -445,9 +560,343 @@ public enum AttributeName {
     web_cp_flight_get_time,
 
     /**
-     * Indicates if ests telemetry was skipped.
+     * Indicates the OpenID issuer returned in the discovery document.
      */
-    skipped_ests_telemetry
+    openid_issuer,
 
+    /**
+     * Indicates the reason for an invalid OpenID issuer.
+     */
+    openid_issuer_invalid_reason,
 
+    /**
+     * Indicates the authority used to make the OpenID configuration request.
+     */
+    openid_config_request_authority,
+
+    /**
+     * Indicates if the request is a redirect to playstore launch from webcp.
+     */
+    is_redirect_to_playstore_launch_from_webcp,
+
+    /**
+     * Records if current flow is in webcp flow.
+     */
+    is_in_web_cp_flow,
+
+    /**
+     * Indicates whether the filter-then-clone optimization is enabled for in-memory cache
+     * getCredentialsFilteredBy()/getAccountsFilteredBy() operations.
+     */
+    is_filter_then_clone_enabled,
+
+    /**
+     * Indicates whether a desync was detected between the in-memory cache and SharedPreferences
+     * during removeCredential(). True means the key was found in SharedPreferences
+     * (via keySet()) but not in the in-memory map.
+     */
+    cache_key_in_storage_but_not_in_memory,
+
+    /**
+     * Elapsed time (in milliseconds) spent in executing the load() method in BrokerOAuth2TokenCache for in memory cache.
+     */
+    elapsed_time_in_memory_cache_load,
+
+    /**
+     * Passkey operation type (e.g., registration, authentication).
+     */
+    passkey_operation_type,
+
+    /**
+     * Passkey DOM exception name (if any).
+     */
+    passkey_dom_exception_name,
+
+    /**
+     * Origin extracted from the WebAuthn clientDataJSON response.
+     */
+    passkey_origin,
+
+    /**
+     * AAGUID of the authenticator, extracted from the attestation authenticatorData (create flow only).
+     */
+    passkey_aaguid,
+
+    /**
+     *  Elapsed time (in milliseconds) spent in executing the save() method in BrokerOAuth2TokenCache.
+     */
+    elapsed_time_save_aggregated_account_data,
+
+    /**
+     *  Elapsed time (in milliseconds) spent in executing the loadAggregatedAccountData() method in BrokerOAuth2TokenCache.
+     */
+    elapsed_time_load_aggregated_account_data,
+
+    /**
+     * Indicates if account aggregation is skipped during saveTokenResult() call.
+     */
+    is_account_aggregation_skipped,
+
+    /**
+     * Indicates if the redirect URL in webview is opened in browser.
+     */
+    is_redirect_url_opened_in_browser,
+
+    /**
+     * Number of PRT accounts for which SSO token generation succeeded in a Browser SSO request.
+     * DataClassification: SystemMetadata.
+     */
+    browser_sso_success_count,
+
+    /**
+     * Number of PRT accounts for which SSO token generation failed in a Browser SSO request.
+     * DataClassification: SystemMetadata.
+     */
+    browser_sso_failure_count,
+
+    /**
+     * Indicates the number of retry attempts made in DRS discovery when the retry policy is enabled.
+     */
+    drs_discovery_retry_number,
+
+    /**
+     * Indicates the number of retry attempts made in TLS connection when the retry policy is enabled.
+     */
+    client_tls_retry_number,
+
+    //region KeyPair generation
+
+    /**
+     * Describes the keypair generation operation.
+     */
+    key_pair_gen_description,
+
+    /**
+     * Indicates the algorithm used to generate a keypair.
+     */
+    key_pair_gen_algorithm,
+
+    /**
+     * Indicates the encryption paddings used to generate a keypair.
+     */
+    key_pair_gen_encryption_paddings,
+
+    /**
+     * Indicates the history of key generation failures with details of each failed attempt.
+     */
+    key_pair_gen_failure_history,
+
+    /**
+     * The time (in nanoseconds) spent on generating a keypair.
+     */
+    key_pair_gen_elapsed_time,
+
+    /**
+     * Indicates whether the conservative key generation spec for legacy devices (API &lt;= 30)
+     * flight is enabled. Used to validate the rollout/effectiveness of the legacy-device fix.
+     */
+    key_pair_gen_conservative_spec_flight_enabled,
+
+    //endregion
+
+    //region Secret Key Wrapping
+
+    /**
+     * Indicates the supported paddings for key pair in the device.
+     */
+    key_pair_supported_paddings,
+
+    /**
+     * Records the prioritized list of cipher specifications used for secret key wrapping/unwrapping.
+     */
+    available_transformation_list,
+
+    /**
+     * Records the full Cipher transformation string (e.g., "AES/GCM/NoPadding").
+     */
+    elected_cipher_transformation,
+
+    /**
+     * Indicates the transformation used for wrapping/unwrapping the secret key.
+     */
+    secret_key_transformation,
+
+    /**
+     * Indicates the algorithm used for wrapping/unwrapping the secret key.
+     */
+    secret_key_algorithm,
+
+    /**
+     * Indicates the wrapped secret key serializer id.
+     */
+    secret_key_wrapping_serializer_id,
+
+    /**
+     * The size (in bits) of the secret key.
+     */
+    secret_key_size,
+
+    /**
+     * The time (in milliseconds) spent on secret key serialization/deserialization.
+     */
+    secret_key_serialization_duration,
+
+    /**
+     * Indicates which check in the secret-key read path triggered a wipe of existing key material
+     * (e.g. an unrecoverable load error, or an orphaned wrapped-key file whose keystore key is gone).
+     * Legitimate first-time reads (no keystore key and no wrapped-key file) are intentionally not recorded.
+     */
+    secret_key_wipe_reason,
+
+    /**
+     * The actual root cause (simple class name + message) of the exception that caused a secret-key
+     * read failure (e.g. "IOException: /data/.../key (No space left on device)"). This is the
+     * underlying failure the ClientException wraps, captured unconditionally so the real reason is
+     * never lost behind the generic wrapper message, even for deeply nested cause chains.
+     */
+    secret_key_read_root_cause,
+
+    /**
+     * Whether the KeyStore failure that triggered a secret-key wipe is transient (retry may succeed)
+     * or permanent. One of TRANSIENT, NOT_TRANSIENT (API 33+, derived from
+     * KeyStoreException.isTransientFailure()), API_TOO_OLD (API < 33, cannot be determined), or
+     * NOT_KEYSTORE_ERROR (no KeyStoreException in the cause chain).
+     */
+    keystore_error_transience,
+
+    /**
+     * Indicates if an external handler was found to handle the openid-vc:// URI.
+     */
+    is_openid_vc_handler_found,
+
+    /**
+     * Indicates whether a broker-install {@code intent://} request was blocked because its target
+     * package was not the allow-listed store. Set on the current WebView-processing span (emitted
+     * only when the broker-install intent validation flight is enabled).
+     * <p>
+     * Note: this attribute name MUST also be added to the {@code AttributeName} enum in the broker
+     * repository ({@code identity-authnz-teams/ad-accounts-for-android}). This is functionally
+     * required, not just for consistency: the broker's OpenTelemetry exporter drops any attribute
+     * whose name does not resolve in broker's own {@code AttributeName} enum, so if this attribute is
+     * ever set on a span emitted from the broker process it will be silently discarded until it is
+     * mirrored there.
+     */
+    is_broker_install_intent_blocked,
+    
+    //endregion
+
+    //region Device Registration IPC Attributes
+
+    /**
+     * Indicates the status of content provider IPC strategy for device registration.
+     */
+    content_provider_status,
+
+    /**
+     * Indicates the status of bound service IPC strategy for device registration.
+     */
+    bound_service_status,
+
+    /**
+     * Indicates the status of Legacy Account Manager IPC strategy for device registration.
+     */
+    legacy_account_manager_status,
+
+    /**
+     * Indicates the name of the device registration protocol being executed.
+     */
+    device_registration_protocol_name,
+
+    //endregion
+
+    //region WebView target=_blank navigation
+
+    /**
+     * Indicates which routing path was taken for a target=_blank URL intercepted
+     * by onCreateWindow: "null_url", "non_ssl", "non_tlr_inline", or "tlr_browser".
+     */
+    target_blank_navigation_route,
+
+    //endregion
+
+    //region x-ms-clientdata server telemetry attributes
+
+    /**
+     * The server-side error code returned in the x-ms-clientdata header or clientdata
+     * query parameter from eSTS / MSA.
+     */
+    server_error,
+
+    /**
+     * The server-side sub-error code returned in the x-ms-clientdata header or clientdata
+     * query parameter from eSTS / MSA.
+     */
+    server_sub_error,
+
+    /**
+     * The cloud instance returned in the x-ms-clientdata header or clientdata query
+     * parameter from eSTS / MSA (e.g. "public", "usgov").
+     */
+    server_cloud_instance,
+
+    /**
+     * The caller data boundary returned in the x-ms-clientdata header or clientdata
+     * query parameter from eSTS / MSA, indicating the data residency boundary.
+     */
+    server_caller_data_boundary,
+
+    //endregion
+
+    //region PKeyAuth SubmitUrl same-origin validation (CWE-918 / SSRF, AB#3706623)
+
+    /**
+     * The verdict of PKeyAuth {@code SubmitUrl} same-origin validation for a challenge parsed from an
+     * untrusted WebView redirect. One of {@code ALLOWED}, {@code REJECTED_BACKSLASH_AUTHORITY},
+     * {@code REJECTED_SUBMIT_NOT_HTTPS}, {@code REJECTED_ORIGIN_UNRESOLVABLE}, or
+     * {@code REJECTED_ORIGIN_MISMATCH}. Emitted on every evaluated challenge (including {@code
+     * ALLOWED}) so shadow-mode rejection rates can be measured before enforcement is ramped. Contains
+     * no hostname, URL, nonce, or {@code Context}.
+     */
+    pkeyauth_submit_url_origin_validation_result,
+
+    /**
+     * Whether PKeyAuth {@code SubmitUrl} origin validation was enforcing at evaluation time (i.e. a
+     * non-{@code ALLOWED} verdict blocked the challenge). {@code false} means shadow mode: the verdict
+     * was measured and reported but the challenge still proceeded.
+     */
+    pkeyauth_submit_url_origin_validation_enforced,
+
+    /**
+     * Whether the PKeyAuth {@code SubmitUrl} host is a validated AAD cloud host (per
+     * {@code AzureActiveDirectory.isValidCloudHost}). Answers the cross-origin question without
+     * logging the hostname itself. {@code false} when the {@code SubmitUrl} could not be safely
+     * parsed (e.g. the backslash parser-differential guard fired) or the host is not a known AAD
+     * cloud.
+     */
+    pkeyauth_submit_host_is_aad_cloud,
+
+    /**
+     * Whether the PKeyAuth challenging-origin host is a validated AAD cloud host (per
+     * {@code AzureActiveDirectory.isValidCloudHost}). Answers the cross-origin question without
+     * logging the hostname itself. {@code false} when the challenging origin could not be resolved or
+     * is not a known AAD cloud.
+     */
+    pkeyauth_challenging_host_is_aad_cloud,
+
+    /**
+     * Whether the PKeyAuth challenge that was validated arrived on the WebView main frame. A subframe
+     * challenge is validated against the main-frame origin; this flag lets a false-reject of a
+     * legitimate cross-origin iframe challenge be distinguished in telemetry before deciding whether
+     * to special-case it.
+     */
+    pkeyauth_challenge_is_main_frame,
+
+    /**
+     * Where the PKeyAuth challenging origin came from: {@code recorded} (the last https main-frame
+     * URL), {@code webview_url} (a fallback to {@code WebView#getUrl()}), or {@code none} (neither was
+     * available).
+     */
+    pkeyauth_challenging_origin_source,
+
+    //endregion
 }

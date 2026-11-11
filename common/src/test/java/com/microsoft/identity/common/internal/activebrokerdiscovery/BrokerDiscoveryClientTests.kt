@@ -22,16 +22,29 @@
 //  THE SOFTWARE.
 package com.microsoft.identity.common.internal.activebrokerdiscovery
 
+import android.content.Context
 import android.os.Bundle
+import androidx.test.core.app.ApplicationProvider
+import com.microsoft.identity.common.adal.internal.AuthenticationSettings
+import com.microsoft.identity.common.components.AndroidStorageSupplier
+import com.microsoft.identity.common.crypto.AndroidAuthSdkStorageEncryptionManager
+import com.microsoft.identity.common.crypto.MockData
 import com.microsoft.identity.common.exception.BrokerCommunicationException
+import com.microsoft.identity.common.internal.broker.BrokerData
 import com.microsoft.identity.common.internal.broker.BrokerData.Companion.prodCompanyPortal
-import com.microsoft.identity.common.internal.broker.BrokerData.Companion.prodLTW
 import com.microsoft.identity.common.internal.broker.BrokerData.Companion.prodMicrosoftAuthenticator
 import com.microsoft.identity.common.internal.broker.ipc.AbstractIpcStrategyWithServiceValidation
 import com.microsoft.identity.common.internal.broker.ipc.BrokerOperationBundle
 import com.microsoft.identity.common.internal.broker.ipc.IIpcStrategy
+import com.microsoft.identity.common.internal.cache.ClientActiveBrokerCache
+import com.microsoft.identity.common.internal.cache.SharedPreferencesFileManager
+import com.microsoft.identity.common.java.crypto.StorageEncryptionManager
+import com.microsoft.identity.common.java.crypto.key.AES256SecretKeyGenerator
+import com.microsoft.identity.common.java.crypto.key.ISecretKeyProvider
+import com.microsoft.identity.common.java.crypto.key.PredefinedKeyProvider
 import com.microsoft.identity.common.java.exception.ClientException
 import com.microsoft.identity.common.java.exception.ClientException.ONLY_SUPPORTS_ACCOUNT_MANAGER_ERROR_CODE
+import com.microsoft.identity.common.java.exception.ErrorStrings
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert
@@ -40,9 +53,18 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 class BrokerDiscoveryClientTests {
+
+    companion object {
+        /**
+         * Mirrors ClientActiveBrokerCache.BROKER_METADATA_CACHE_STORE_ON_BROKER_SDK_SIDE_STORAGE_NAME
+         * (which is private). Centralized here to reduce drift if the production name changes.
+         */
+        private const val BROKER_SDK_CACHE_FILE_NAME = "BROKER_METADATA_CACHE_STORE_ON_BROKER_SDK_SIDE"
+    }
 
     /**
      * Happy scenario.
@@ -208,66 +230,7 @@ class BrokerDiscoveryClientTests {
         Assert.assertTrue(cache.shouldUseAccountManager())
         Assert.assertNull(cache.getCachedActiveBroker())
     }
-
-
-    /**
-     * If we have the LTW broker cached.
-     * The user uninstall + reinstall LTW, and somehow the new LTW doesn't have the broker code.
-     *
-     * In such case, the cached value (LTW) should be wiped.
-     * Broker discovery should be triggered, and AuthApp should be persisted there.
-     **/
-    @Test
-    fun testQuery_UnsupportedBrokerErrorReturned_cacheInvalidated(){
-        val cache = InMemoryActiveBrokerCache()
-        cache.setCachedActiveBroker(prodLTW)
-
-        val client = BrokerDiscoveryClient(
-            brokerCandidates = setOf(
-                prodMicrosoftAuthenticator, prodCompanyPortal
-            ),
-            getActiveBrokerFromAccountManager = {
-                // Account Manager shouldn't be used.
-                throw IllegalStateException()
-            },
-            ipcStrategy = object : IIpcStrategy {
-                override fun communicateToBroker(bundle: BrokerOperationBundle): Bundle {
-                    if (bundle.targetBrokerAppPackageName == prodMicrosoftAuthenticator.packageName ||
-                        bundle.targetBrokerAppPackageName == prodCompanyPortal.packageName) {
-                        val returnBundle = Bundle()
-                        returnBundle.putString(
-                            BrokerDiscoveryClient.ACTIVE_BROKER_PACKAGE_NAME_BUNDLE_KEY,
-                            prodMicrosoftAuthenticator.packageName
-                        )
-                        returnBundle.putString(
-                            BrokerDiscoveryClient.ACTIVE_BROKER_SIGNING_CERTIFICATE_THUMBPRINT_BUNDLE_KEY,
-                            prodMicrosoftAuthenticator.signingCertificateThumbprint
-                        )
-                        return returnBundle
-                    }
-
-                    throw IllegalStateException()
-                }
-
-                override fun isSupportedByTargetedBroker(targetedBrokerPackageName: String): Boolean {
-                    return targetedBrokerPackageName == prodMicrosoftAuthenticator.packageName ||
-                            targetedBrokerPackageName == prodCompanyPortal.packageName
-                }
-
-                override fun getType(): IIpcStrategy.Type {
-                    return IIpcStrategy.Type.CONTENT_PROVIDER
-                }
-            },
-            cache = cache,
-            isPackageInstalled =  {
-                it == prodMicrosoftAuthenticator || it == prodCompanyPortal || it == prodLTW
-            },
-            isValidBroker = { true }
-        )
-
-        Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBroker())
-    }
-
+    
     /**
      * No Broker is installed.
      **/
@@ -441,6 +404,59 @@ class BrokerDiscoveryClientTests {
 
         Assert.assertNull(client.getActiveBroker())
         Assert.assertNull(cache.getCachedActiveBroker())
+    }
+
+    /**
+     * There is already a cached active broker, but it no longer supports the IPC strategy.
+     * The cache should be invalidated and discovery should continue with other broker candidates.
+     **/
+    @Test
+    fun testCache_CachedBrokerNoLongerSupportsIpc() {
+        val cache = InMemoryActiveBrokerCache()
+        cache.setCachedActiveBroker(prodMicrosoftAuthenticator)
+
+        val client = BrokerDiscoveryClient(
+            brokerCandidates = setOf(
+                prodMicrosoftAuthenticator, prodCompanyPortal
+            ),
+            getActiveBrokerFromAccountManager = {
+                throw IllegalStateException("AccountManager should not be used when another broker supports IPC.")
+            },
+            ipcStrategy = object : IIpcStrategy {
+                override fun communicateToBroker(bundle: BrokerOperationBundle): Bundle {
+                    if (bundle.targetBrokerAppPackageName == prodCompanyPortal.packageName) {
+                        val returnBundle = Bundle()
+                        returnBundle.putString(
+                            BrokerDiscoveryClient.ACTIVE_BROKER_PACKAGE_NAME_BUNDLE_KEY,
+                            prodCompanyPortal.packageName
+                        )
+                        returnBundle.putString(
+                            BrokerDiscoveryClient.ACTIVE_BROKER_SIGNING_CERTIFICATE_THUMBPRINT_BUNDLE_KEY,
+                            prodCompanyPortal.signingCertificateThumbprint
+                        )
+                        return returnBundle
+                    }
+
+                    throw IllegalStateException("Unsupported broker should not be used as the cached active broker.")
+                }
+
+                override fun isSupportedByTargetedBroker(targetedBrokerPackageName: String): Boolean {
+                    return targetedBrokerPackageName == prodCompanyPortal.packageName
+                }
+
+                override fun getType(): IIpcStrategy.Type {
+                    return IIpcStrategy.Type.CONTENT_PROVIDER
+                }
+            },
+            cache = cache,
+            isPackageInstalled = { brokerData ->
+                brokerData == prodMicrosoftAuthenticator || brokerData == prodCompanyPortal
+            },
+            isValidBroker = { true }
+        )
+
+        Assert.assertEquals(prodCompanyPortal, client.getActiveBroker())
+        Assert.assertEquals(prodCompanyPortal, cache.getCachedActiveBroker())
     }
 
     /**
@@ -633,7 +649,6 @@ class BrokerDiscoveryClientTests {
         )
     }
 
-
     /**
      * Test if authapp does not support broker discovery, but cp does.
      * */
@@ -688,4 +703,504 @@ class BrokerDiscoveryClientTests {
         Assert.assertFalse(cache.shouldUseAccountManager())
     }
 
+    /**
+     * Making 2 calls, the first one when the broker is not installed.
+     * Then make a request after the broker is installed.
+     * */
+    @Test
+    fun testBrokerAppRecentlyInstalled(){
+        val cache = InMemoryActiveBrokerCache()
+        var installedBrokerApp: BrokerData? = null
+
+        val client = BrokerDiscoveryClient(
+            brokerCandidates = setOf(
+                prodMicrosoftAuthenticator, prodCompanyPortal
+            ),
+            getActiveBrokerFromAccountManager = {
+                return@BrokerDiscoveryClient installedBrokerApp
+            },
+            ipcStrategy = object : IIpcStrategy {
+                override fun communicateToBroker(bundle: BrokerOperationBundle): Bundle {
+                    installedBrokerApp?.let {
+                        if (bundle.targetBrokerAppPackageName == it.packageName) {
+                            val returnBundle = Bundle()
+                            returnBundle.putString(
+                                BrokerDiscoveryClient.ACTIVE_BROKER_PACKAGE_NAME_BUNDLE_KEY,
+                                it.packageName
+                            )
+                            returnBundle.putString(
+                                BrokerDiscoveryClient.ACTIVE_BROKER_SIGNING_CERTIFICATE_THUMBPRINT_BUNDLE_KEY,
+                                it.signingCertificateThumbprint
+                            )
+                            return returnBundle
+                        }
+                    }
+
+                    throw IllegalStateException()
+                }
+                override fun isSupportedByTargetedBroker(targetedBrokerPackageName: String): Boolean {
+                    return true
+                }
+                override fun getType(): IIpcStrategy.Type {
+                    return IIpcStrategy.Type.CONTENT_PROVIDER
+                }
+            },
+            cache = cache,
+            isPackageInstalled =  {
+                return@BrokerDiscoveryClient installedBrokerApp != null
+            },
+            isValidBroker = { true }
+        )
+
+        // First call, no broker installed.
+        Assert.assertNull(client.getActiveBroker())
+
+        // Then install Authenticator!
+        installedBrokerApp = prodMicrosoftAuthenticator
+
+        // Second call, Authenticator is installed.
+        Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBroker())
+    }
+
+    /**
+     * Test that the value is read from in memory cache, not going through the discovery flow or even the storage.
+     * For this test, we'll persist a value in storage. After the first read, the storage should never be accessed again.
+     **/
+    @Test
+    fun testReadFromInMemoryCache_WithValueInStorage() {
+        val cache = object : InMemoryActiveBrokerCache() {
+            var readCount = 0
+            override fun getCachedActiveBroker(): BrokerData? {
+                readCount++
+                return super.getCachedActiveBroker()
+            }
+        }
+        cache.setCachedActiveBroker(prodMicrosoftAuthenticator)
+
+        val client = BrokerDiscoveryClient(
+            brokerCandidates = setOf(
+                prodMicrosoftAuthenticator, prodCompanyPortal
+            ),
+            getActiveBrokerFromAccountManager = {
+                throw IllegalStateException("getActiveBrokerFromAccountManager should not be called when reading from cache")
+            },
+            ipcStrategy = object : IIpcStrategy {
+                override fun communicateToBroker(bundle: BrokerOperationBundle): Bundle {
+                    throw IllegalStateException("communicateToBroker should not be called when reading from cache")
+                }
+                override fun isSupportedByTargetedBroker(targetedBrokerPackageName: String): Boolean {
+                    return targetedBrokerPackageName == prodMicrosoftAuthenticator.packageName
+                }
+                override fun getType(): IIpcStrategy.Type {
+                    return IIpcStrategy.Type.CONTENT_PROVIDER
+                }
+            },
+            cache = cache,
+            isPackageInstalled = { packageName ->
+                packageName == prodMicrosoftAuthenticator
+            },
+            isValidBroker = { brokerData ->
+                brokerData == prodMicrosoftAuthenticator
+            }
+        )
+
+        Assert.assertNull(client.cachedData)
+        Assert.assertEquals(0, cache.readCount)
+
+        // Trigger "reading from storage"
+        val result = client.getActiveBrokerWithInMemoryCache(null)
+
+        Assert.assertEquals(prodMicrosoftAuthenticator, result)
+        Assert.assertEquals(prodMicrosoftAuthenticator, client.cachedData!!.brokerData)
+        Assert.assertEquals(1, cache.readCount)
+
+        // If we invoke the API again, the read count should not increase, as the value is read from in-memory cache.
+        client.getActiveBrokerWithInMemoryCache(null)
+        Assert.assertEquals(prodMicrosoftAuthenticator, client.cachedData!!.brokerData)
+        Assert.assertEquals(1, cache.readCount)
+    }
+
+    /**
+     * Test that the value is read from in memory cache, not going through the discovery flow or even the storage.
+     **/
+    @Test
+    fun testReadFromInMemoryCache_WithEmptyStorage() {
+        val cache = object : InMemoryActiveBrokerCache() {
+            var readCount = 0
+            override fun getCachedActiveBroker(): BrokerData? {
+                readCount++
+                return super.getCachedActiveBroker()
+            }
+        }
+
+        val client = BrokerDiscoveryClient(
+            brokerCandidates = setOf(
+                prodMicrosoftAuthenticator, prodCompanyPortal
+            ),
+            getActiveBrokerFromAccountManager = {
+                throw IllegalStateException("getActiveBrokerFromAccountManager should not be called when the ipc operation succeeded.")
+            },
+            ipcStrategy = object : IIpcStrategy {
+                override fun communicateToBroker(bundle: BrokerOperationBundle): Bundle {
+                    if (bundle.targetBrokerAppPackageName == prodMicrosoftAuthenticator.packageName) {
+                        val returnBundle = Bundle()
+                        returnBundle.putString(
+                            BrokerDiscoveryClient.ACTIVE_BROKER_PACKAGE_NAME_BUNDLE_KEY,
+                            prodMicrosoftAuthenticator.packageName
+                        )
+                        returnBundle.putString(
+                            BrokerDiscoveryClient.ACTIVE_BROKER_SIGNING_CERTIFICATE_THUMBPRINT_BUNDLE_KEY,
+                            prodMicrosoftAuthenticator.signingCertificateThumbprint
+                        )
+                        return returnBundle
+                    }
+
+                    throw IllegalStateException()
+                }
+                override fun isSupportedByTargetedBroker(targetedBrokerPackageName: String): Boolean {
+                    return true
+                }
+                override fun getType(): IIpcStrategy.Type {
+                    return IIpcStrategy.Type.CONTENT_PROVIDER
+                }
+            },
+            cache = cache,
+            isPackageInstalled = { packageName ->
+                packageName == prodMicrosoftAuthenticator
+            },
+            isValidBroker = { brokerData ->
+                brokerData == prodMicrosoftAuthenticator
+            }
+        )
+
+        Assert.assertNull(client.cachedData)
+        Assert.assertEquals(0, cache.readCount)
+
+        // Trigger "reading from storage"
+        val result = client.getActiveBrokerWithInMemoryCache(null)
+
+        Assert.assertEquals(prodMicrosoftAuthenticator, result)
+        Assert.assertEquals(prodMicrosoftAuthenticator, cache.activeBroker)
+        Assert.assertEquals(prodMicrosoftAuthenticator, client.cachedData!!.brokerData)
+        Assert.assertEquals(1, cache.readCount)
+
+        // If we invoke the API again, the read count should not increase, as the value is read from in-memory cache.
+        client.getActiveBrokerWithInMemoryCache(null)
+        Assert.assertEquals(prodMicrosoftAuthenticator, client.cachedData!!.brokerData)
+        Assert.assertEquals(1, cache.readCount)
+    }
+
+    /**
+     * Test that if the broker is not installed, we will never perform any IPC or storage read after the first attempt.
+     **/
+    @Test
+    fun testReadFromInMemoryCache_BrokerNotInstalled() {
+        val cache = object : InMemoryActiveBrokerCache() {
+            var readCount = 0
+            override fun getCachedActiveBroker(): BrokerData? {
+                readCount++
+                return super.getCachedActiveBroker()
+            }
+        }
+
+        var accountManagerReadCount = 0
+        val client = BrokerDiscoveryClient(
+            brokerCandidates = setOf(
+                prodMicrosoftAuthenticator, prodCompanyPortal
+            ),
+            getActiveBrokerFromAccountManager = {
+                accountManagerReadCount++
+                null
+            },
+            ipcStrategy = object : IIpcStrategy {
+                override fun communicateToBroker(bundle: BrokerOperationBundle): Bundle {
+                    throw IllegalStateException()
+                }
+                override fun isSupportedByTargetedBroker(targetedBrokerPackageName: String): Boolean {
+                    return true
+                }
+                override fun getType(): IIpcStrategy.Type {
+                    return IIpcStrategy.Type.CONTENT_PROVIDER
+                }
+            },
+            cache = cache,
+            isPackageInstalled = { false },
+            isValidBroker = { false }
+        )
+
+        Assert.assertNull(client.cachedData)
+        Assert.assertEquals(0, cache.readCount)
+
+        // Trigger "reading from storage"
+        val result = client.getActiveBrokerWithInMemoryCache(null)
+
+        Assert.assertNull(result)
+        Assert.assertNull(cache.activeBroker)
+        Assert.assertNull(client.cachedData!!.brokerData)
+        Assert.assertEquals(1, cache.readCount)
+        Assert.assertEquals(1, accountManagerReadCount)
+
+        // If we invoke the API again, the read counts should not increase, as the value is read from in-memory cache.
+        client.getActiveBrokerWithInMemoryCache(null)
+        Assert.assertNull(client.cachedData!!.brokerData)
+        Assert.assertEquals(1, cache.readCount)
+        Assert.assertEquals(1, accountManagerReadCount)
+    }
+
+    /**
+     * Test concurrent access to in-memory cache from multiple coroutines.
+     * All coroutines should read from cache without triggering discovery flow or storage operations.
+     **/
+    @Test
+    fun testReadFromInMemoryCache_ConcurrentCoroutines() {
+        val cache = object : InMemoryActiveBrokerCache() {
+            val readCount = AtomicInteger(0)
+            override fun getCachedActiveBroker(): BrokerData? {
+                readCount.incrementAndGet()
+                return super.getCachedActiveBroker()
+            }
+        }
+        // Pre-populate the cache with Microsoft Authenticator as the active broker
+        cache.setCachedActiveBroker(prodMicrosoftAuthenticator)
+
+        // Create multiple clients that share the same cache
+        val client = getClientForInMemoryCacheTest(cache)
+
+        // Run multiple coroutines concurrently (same thread, multiple coroutines)
+        runBlocking {
+            launch {
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+            }
+            launch {
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+            }
+            launch {
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+            }
+        }
+
+        // Verify the cache state after all concurrent operations
+        Assert.assertEquals(prodMicrosoftAuthenticator, client.cachedData!!.brokerData)
+        Assert.assertEquals(1, cache.readCount.get())
+    }
+
+    /**
+     * Test concurrent access to in-memory cache from multiple threads.
+     * All threads should read from cache without triggering discovery flow or storage operations.
+     **/
+    @Test
+    fun testReadFromInMemoryCache_Concurrent() {
+        val cache = object : InMemoryActiveBrokerCache() {
+            val readCount = AtomicInteger(0)
+            override fun getCachedActiveBroker(): BrokerData? {
+                readCount.incrementAndGet()
+                return super.getCachedActiveBroker()
+            }
+        }
+        // Pre-populate the cache with Microsoft Authenticator as the active broker
+        cache.setCachedActiveBroker(prodMicrosoftAuthenticator)
+
+        val countDownLatch = CountDownLatch(3)
+        val client = getClientForInMemoryCacheTest(cache)
+
+        // Start multiple threads that all try to get the active broker
+        Thread {
+            try {
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+            } finally {
+                countDownLatch.countDown()
+            }
+        }.start()
+
+        Thread {
+            try {
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+            } finally {
+                countDownLatch.countDown()
+            }
+        }.start()
+
+        Thread {
+            try {
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+                Assert.assertEquals(prodMicrosoftAuthenticator, client.getActiveBrokerWithInMemoryCache(null))
+            } finally {
+                countDownLatch.countDown()
+            }
+        }.start()
+
+        // Wait for all threads to complete
+        countDownLatch.await()
+
+        // Verify the cache state after all concurrent operations
+        Assert.assertEquals(prodMicrosoftAuthenticator, client.cachedData!!.brokerData)
+        Assert.assertEquals(1, cache.readCount.get())
+    }
+
+    // Helper method to create a client that will fail if any discovery operations are triggered
+    private fun getClientForInMemoryCacheTest(cache: InMemoryActiveBrokerCache): BrokerDiscoveryClient {
+        return BrokerDiscoveryClient(
+            brokerCandidates = setOf(
+                prodMicrosoftAuthenticator, prodCompanyPortal
+            ),
+            getActiveBrokerFromAccountManager = {
+                throw IllegalStateException("getActiveBrokerFromAccountManager should not be called when reading from cache")
+            },
+            ipcStrategy = object : IIpcStrategy {
+                override fun communicateToBroker(bundle: BrokerOperationBundle): Bundle {
+                    throw IllegalStateException("communicateToBroker should not be called when reading from cache")
+                }
+                override fun isSupportedByTargetedBroker(targetedBrokerPackageName: String): Boolean {
+                    return targetedBrokerPackageName == prodMicrosoftAuthenticator.packageName ||
+                            targetedBrokerPackageName == prodCompanyPortal.packageName
+                }
+                override fun getType(): IIpcStrategy.Type {
+                    return IIpcStrategy.Type.CONTENT_PROVIDER
+                }
+            },
+            cache = cache,
+            isPackageInstalled = { brokerData ->
+                brokerData == prodMicrosoftAuthenticator || brokerData == prodCompanyPortal
+            },
+            isValidBroker = { brokerData ->
+                brokerData == prodMicrosoftAuthenticator || brokerData == prodCompanyPortal
+            }
+        )
+    }
+
+    /**
+     * End-to-end test for the encryption key mismatch bug.
+     *
+     * Simulates Company Portal scenario:
+     * 1. MSAL sets a predefined key → cache data is encrypted with it (U001 prefix).
+     * 2. On next launch, WPJ API uses a different key for encryption (simulating keystore).
+     * 3. Reading cache fails decryption (ClientException caught by EncryptedNameValueStorage) → null.
+     * 4. BrokerDiscoveryClient falls back to IPC discovery — no crash.
+     * 5. After IPC, cache is re-populated with the new key and is readable.
+     *
+     * Uses real StorageEncryptionManager subclasses and ClientActiveBrokerCache.
+     * Uses a second PredefinedKeyProvider to stand in for the Android KeyStore key
+     * (which is unavailable in Robolectric).
+     */
+    @Test
+    fun testCacheDecryptionFailure_FallsBackToIpcDiscovery() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+        // Ensure test isolation: clear any leftover data in the broker SDK cache SharedPreferences
+        // and the SharedPreferencesFileManager singleton cache.
+        context.getSharedPreferences(BROKER_SDK_CACHE_FILE_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
+        SharedPreferencesFileManager.clearSingletonCache()
+        AuthenticationSettings.INSTANCE.clearSecretKeysForTestCases()
+
+        try {
+            // A mock "keystore" key provider using a different key AND a different identifier than
+            // the predefined one. PredefinedKeyProvider always uses "U001", so we need a custom
+            // ISecretKeyProvider with a distinct identifier (e.g. "KS01") to simulate the real
+            // KeyStoreBackedSecretKeyProvider behavior.
+            val mockKeystoreKeyProvider = object : ISecretKeyProvider {
+                override val alias: String = "MOCK_KEYSTORE_KEY"
+                override val keyTypeIdentifier: String = "KS01"
+                override val key: javax.crypto.SecretKey = AES256SecretKeyGenerator.generateKeyFromRawBytes(MockData.ANOTHER_PREDEFINED_KEY)
+                override val cipherTransformation: String = "AES/CBC/PKCS5Padding"
+            }
+
+            // Step 1: Write cache data using the predefined key (simulates MSAL-initialized path).
+            AuthenticationSettings.INSTANCE.setSecretKey(MockData.PREDEFINED_KEY)
+            val writeEncryptionManager = AndroidAuthSdkStorageEncryptionManager(context)
+            val writeSupplier = AndroidStorageSupplier(context, writeEncryptionManager)
+            val writeCache = ClientActiveBrokerCache.getBrokerSdkCache(writeSupplier)
+            writeCache.setCachedActiveBroker(prodMicrosoftAuthenticator)
+
+            // Verify data was written successfully.
+            Assert.assertEquals(prodMicrosoftAuthenticator, writeCache.getCachedActiveBroker())
+
+            // Step 2: Clear the predefined key and SharedPreferencesFileManager cache
+            //         (simulates app restart where MSAL hasn't initialized).
+            AuthenticationSettings.INSTANCE.clearSecretKeysForTestCases()
+            SharedPreferencesFileManager.clearSingletonCache()
+
+            // Step 3: Create a "keystore-only" encryption manager that uses the mock keystore key
+            //         and throws ClientException for U001-encrypted data (simulates the fix).
+            val readEncryptionManager = object : StorageEncryptionManager() {
+                override fun getKeyProviderForEncryption(): ISecretKeyProvider {
+                    return mockKeystoreKeyProvider
+                }
+
+                override fun getKeyProviderForDecryption(cipherText: ByteArray): List<ISecretKeyProvider> {
+                    val keyIdentifier = getKeyIdentifierFromCipherText(cipherText)
+                    if (PredefinedKeyProvider.USER_PROVIDED_KEY_IDENTIFIER.equals(keyIdentifier, ignoreCase = true)) {
+                        throw ClientException(
+                            ErrorStrings.DECRYPTION_FAILED,
+                            "Cipher Text is encrypted by USER_PROVIDED_KEY_IDENTIFIER, " +
+                                    "but mPredefinedKeyProvider is null."
+                        )
+                    }
+                    // For data encrypted with the mock keystore key ("KS01"), return it.
+                    return listOf(mockKeystoreKeyProvider)
+                }
+            }
+            val readSupplier = AndroidStorageSupplier(context, readEncryptionManager)
+            val readCache = ClientActiveBrokerCache.getBrokerSdkCache(readSupplier)
+
+            // Step 4: Use this cache in BrokerDiscoveryClient — should fall back to IPC, not crash.
+            val client = BrokerDiscoveryClient(
+                brokerCandidates = setOf(
+                    prodMicrosoftAuthenticator, prodCompanyPortal
+                ),
+                getActiveBrokerFromAccountManager = {
+                    throw IllegalStateException("Should not fall back to AccountManager when IPC succeeds")
+                },
+                ipcStrategy = object : IIpcStrategy {
+                    override fun communicateToBroker(bundle: BrokerOperationBundle): Bundle {
+                        val returnBundle = Bundle()
+                        returnBundle.putString(
+                            BrokerDiscoveryClient.ACTIVE_BROKER_PACKAGE_NAME_BUNDLE_KEY,
+                            prodCompanyPortal.packageName
+                        )
+                        returnBundle.putString(
+                            BrokerDiscoveryClient.ACTIVE_BROKER_SIGNING_CERTIFICATE_THUMBPRINT_BUNDLE_KEY,
+                            prodCompanyPortal.signingCertificateThumbprint
+                        )
+                        return returnBundle
+                    }
+                    override fun isSupportedByTargetedBroker(targetedBrokerPackageName: String): Boolean {
+                        return true
+                    }
+                    override fun getType(): IIpcStrategy.Type {
+                        return IIpcStrategy.Type.CONTENT_PROVIDER
+                    }
+                },
+                cache = readCache,
+                isPackageInstalled = {
+                    it == prodMicrosoftAuthenticator || it == prodCompanyPortal
+                },
+                isValidBroker = { true }
+            )
+
+            // Should NOT crash — should fall back to IPC and discover Company Portal.
+            val result = client.getActiveBroker()
+            Assert.assertEquals(prodCompanyPortal, result)
+
+            // After IPC re-populates the cache, it should be readable with the mock keystore key.
+            Assert.assertEquals(prodCompanyPortal, readCache.getCachedActiveBroker())
+        } finally {
+            // Restore global state to avoid leaking into other tests.
+            context.getSharedPreferences(BROKER_SDK_CACHE_FILE_NAME, Context.MODE_PRIVATE)
+                .edit().clear().commit()
+            SharedPreferencesFileManager.clearSingletonCache()
+            AuthenticationSettings.INSTANCE.clearSecretKeysForTestCases()
+        }
+    }
 }

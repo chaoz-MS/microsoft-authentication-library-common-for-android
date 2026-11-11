@@ -42,9 +42,13 @@ import com.microsoft.identity.common.java.dto.CredentialType;
 import com.microsoft.identity.common.java.dto.IdTokenRecord;
 import com.microsoft.identity.common.java.dto.RefreshTokenRecord;
 import com.microsoft.identity.common.java.exception.ClientException;
+import com.microsoft.identity.common.java.flighting.CommonFlight;
+import com.microsoft.identity.common.java.flighting.CommonFlightsManager;
 import com.microsoft.identity.common.java.interfaces.INameValueStorage;
 import com.microsoft.identity.common.java.interfaces.IPlatformComponents;
 import com.microsoft.identity.common.java.logging.Logger;
+import com.microsoft.identity.common.java.opentelemetry.AttributeName;
+import com.microsoft.identity.common.java.opentelemetry.OTelUtility;
 import com.microsoft.identity.common.java.providers.microsoft.MicrosoftAccount;
 import com.microsoft.identity.common.java.providers.microsoft.MicrosoftRefreshToken;
 import com.microsoft.identity.common.java.providers.microsoft.microsoftsts.MicrosoftStsAuthorizationRequest;
@@ -66,7 +70,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import edu.umd.cs.findbugs.annotations.Nullable;
 import lombok.NonNull;
@@ -196,58 +199,6 @@ public class MsalOAuth2TokenCache
     }
 
     /**
-     * @param accountRecord     The {@link AccountRecord} to store.
-     * @param idTokenRecord     The {@link IdTokenRecord} to store.
-     * @param accessTokenRecord The {@link AccessTokenRecord} to store.
-     * @return The {@link ICacheRecord} result of this save action.
-     * @throws ClientException If the supplied Accounts or Credentials are schema invalid.
-     * @see OAuth2TokenCache#save(AccountRecord, IdTokenRecord)
-     */
-    @Deprecated
-    ICacheRecord save(@NonNull AccountRecord accountRecord,
-                      @NonNull IdTokenRecord idTokenRecord,
-                      @NonNull AccessTokenRecord accessTokenRecord) throws ClientException {
-        final String methodName = ":save (3 arg)";
-
-        // Validate the supplied Accounts/Credentials
-        final boolean isAccountValid = isAccountSchemaCompliant(accountRecord);
-        final boolean isIdTokenValid = isIdTokenSchemaCompliant(idTokenRecord);
-        final boolean isAccessTokenValid = isAccessTokenSchemaCompliant(accessTokenRecord);
-
-        if (!isAccountValid) {
-            throw new ClientException(ACCOUNT_IS_SCHEMA_NONCOMPLIANT);
-        }
-
-        if (!isIdTokenValid) {
-            throw new ClientException(CREDENTIAL_IS_SCHEMA_NONCOMPLIANT, "[(ID)]");
-        }
-
-        if (!isAccessTokenValid) {
-            throw new ClientException(CREDENTIAL_IS_SCHEMA_NONCOMPLIANT, "[(AT)]");
-        }
-
-        Logger.verbose(
-                TAG + methodName,
-                "Accounts/Credentials are valid.... proceeding"
-        );
-
-        saveAccounts(accountRecord);
-        saveCredentialsInternal(idTokenRecord, accessTokenRecord);
-
-        final CacheRecord.CacheRecordBuilder result = CacheRecord.builder();
-        result.account(accountRecord);
-        result.accessToken(accessTokenRecord);
-
-        if (CredentialType.V1IdToken.name().equalsIgnoreCase(idTokenRecord.getCredentialType())) {
-            result.v1IdToken(idTokenRecord);
-        } else {
-            result.idToken(idTokenRecord);
-        }
-
-        return result.build();
-    }
-
-    /**
      * @param accountRecord      The {@link AccountRecord} to store.
      * @param idTokenRecord      The {@link IdTokenRecord} to store.
      * @param accessTokenRecord  The {@link AccessTokenRecord} to store.
@@ -299,19 +250,6 @@ public class MsalOAuth2TokenCache
         }
 
         return result.build();
-    }
-
-    // TODO Add unit test
-    @NonNull
-    List<ICacheRecord> saveAndLoadAggregatedAccountData(
-            @NonNull AccountRecord accountRecord,
-            @NonNull IdTokenRecord idTokenRecord,
-            @NonNull AccessTokenRecord accessTokenRecord) throws ClientException {
-        // Use the just-saved ICacheRecord to locate other cache records belonging to this
-        // principal which may be associated to another tenant
-        return mergeCacheRecordWithOtherTenantCacheRecords(
-                save(accountRecord, idTokenRecord, accessTokenRecord)
-        );
     }
 
     @NonNull
@@ -721,45 +659,152 @@ public class MsalOAuth2TokenCache
                 account.getAuthorityType()
         );
 
-        // 'Preloading' our credentials to avoid repeated expensive cache hits
-        final List<Credential> allCredentials = mAccountCredentialCache.getCredentials();
-
-        // Load the AccessTokens
         final String kid = authScheme instanceof PopAuthenticationSchemeWithClientKeyInternal ?
                 ((PopAuthenticationSchemeWithClientKeyInternal) authScheme).getKid()
                 : null;
-        final List<Credential> accessTokens = mAccountCredentialCache.getCredentialsFilteredBy(
-                allCredentials,
-                account.getHomeAccountId(),
-                account.getEnvironment(),
-                getAccessTokenCredentialTypeForAuthenticationScheme(authScheme),
-                clientId,
-                applicationIdentifier,
-                mamEnrollmentIdentifier, //Null unless Intune reports one available for this app
-                account.getRealm(),
-                target,
-                authScheme.getName(),
-                null,
-                kid
+
+        final boolean useFilterThenClone = CommonFlightsManager.INSTANCE
+                .getFlightsProvider()
+                .isFlightEnabled(CommonFlight.ENABLE_FILTER_THEN_CLONE_IN_MEMORY_CACHE)
+                && CommonFlightsManager.INSTANCE
+                .getFlightsProvider()
+                .isFlightEnabled(CommonFlight.USE_IN_MEMORY_CACHE_FOR_ACCOUNTS_AND_CREDENTIALS);
+
+        final List<Credential> accessTokens;
+        final List<Credential> idTokens;
+        final List<Credential> v1IdTokens;
+        List<Credential> refreshTokens;
+
+        // The instanceof guard is necessary because the cache type is fixed at construction time,
+        // but flights are evaluated at runtime. For example, BrokerClientIdRefreshTokenAccessor
+        // always calls MsalOAuth2TokenCache.create(components) with useInMemoryCache=false,
+        // producing a plain SharedPreferencesAccountCredentialCache regardless of flight state.
+        // If both flights are later enabled at runtime, casting without this guard would throw
+        // a ClassCastException.
+        if (useFilterThenClone
+                && mAccountCredentialCache instanceof SharedPreferencesAccountCredentialCacheWithMemoryCache) {
+            // Wrap all reads under one lock to ensure a consistent snapshot and prevent
+            // a concurrent removal from causing partial/inconsistent cache records.
+            final Object cacheLock = ((SharedPreferencesAccountCredentialCacheWithMemoryCache)
+                    mAccountCredentialCache).getCacheLock();
+            synchronized (cacheLock) {
+                accessTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                        account.getHomeAccountId(),
+                        account.getEnvironment(),
+                        getAccessTokenCredentialTypeForAuthenticationScheme(authScheme),
+                        clientId,
+                        applicationIdentifier,
+                        mamEnrollmentIdentifier,
+                        account.getRealm(),
+                        target,
+                        authScheme.getName(),
+                        null,
+                        kid
                 );
 
-        // Load the RefreshTokens
-        List<Credential> refreshTokens = mAccountCredentialCache.getCredentialsFilteredBy(
-                account.getHomeAccountId(),
-                account.getEnvironment(),
-                CredentialType.RefreshToken,
-                clientId,
-                null, //wildcard (*)
-                null, //wildcard (*)
-                isMultiResourceCapable
-                        ? null // wildcard (*)
-                        : account.getRealm(),
-                isMultiResourceCapable
-                        ? null // wildcard (*)
-                        : target,
-                null, // not applicable
-                allCredentials
-        );
+                refreshTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                        account.getHomeAccountId(),
+                        account.getEnvironment(),
+                        CredentialType.RefreshToken,
+                        clientId,
+                        null, //wildcard (*)
+                        null, //wildcard (*)
+                        isMultiResourceCapable
+                                ? null // wildcard (*)
+                                : account.getRealm(),
+                        isMultiResourceCapable
+                                ? null // wildcard (*)
+                                : target,
+                        null // not applicable
+                );
+
+                idTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                        account.getHomeAccountId(),
+                        account.getEnvironment(),
+                        IdToken,
+                        clientId,
+                        null, //wildcard (*)
+                        null, //wildcard (*)
+                        account.getRealm(),
+                        null, // wildcard (*),
+                        null // not applicable
+                );
+
+                v1IdTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                        account.getHomeAccountId(),
+                        account.getEnvironment(),
+                        CredentialType.V1IdToken,
+                        clientId,
+                        null, //wildcard (*)
+                        null, //wildcard (*)
+                        account.getRealm(),
+                        null, // wildcard (*)
+                        null // not applicable
+                );
+            }
+        } else {
+            // Legacy path: preload all credentials (clone-all) once,
+            // then filter the pre-cloned list multiple times.
+            final List<Credential> allCredentials = mAccountCredentialCache.getCredentials();
+
+            accessTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                    allCredentials,
+                    account.getHomeAccountId(),
+                    account.getEnvironment(),
+                    getAccessTokenCredentialTypeForAuthenticationScheme(authScheme),
+                    clientId,
+                    applicationIdentifier,
+                    mamEnrollmentIdentifier,
+                    account.getRealm(),
+                    target,
+                    authScheme.getName(),
+                    null,
+                    kid
+            );
+
+            refreshTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                    account.getHomeAccountId(),
+                    account.getEnvironment(),
+                    CredentialType.RefreshToken,
+                    clientId,
+                    null, //wildcard (*)
+                    null, //wildcard (*)
+                    isMultiResourceCapable
+                            ? null // wildcard (*)
+                            : account.getRealm(),
+                    isMultiResourceCapable
+                            ? null // wildcard (*)
+                            : target,
+                    null, // not applicable
+                    allCredentials
+            );
+
+            idTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                    account.getHomeAccountId(),
+                    account.getEnvironment(),
+                    IdToken,
+                    clientId,
+                    null, //wildcard (*)
+                    null, //wildcard (*)
+                    account.getRealm(),
+                    null, // wildcard (*),
+                    null, // not applicable
+                    allCredentials
+            );
+
+            v1IdTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                    account.getHomeAccountId(),
+                    account.getEnvironment(),
+                    CredentialType.V1IdToken,
+                    clientId,
+                    null, //wildcard (*)
+                    null, //wildcard (*)
+                    account.getRealm(),
+                    null, // wildcard (*)
+                    null, // not applicable
+                    allCredentials
+            );
+        }
 
         if (refreshTokens.isEmpty()) {
             // If we didn't find an RT in the cache, this could be a "TSL-seed" or "dual-client stack"
@@ -790,34 +835,6 @@ public class MsalOAuth2TokenCache
                 refreshTokens.add(fallbackFrt);
             }
         }
-
-        // Load the IdTokens
-        final List<Credential> idTokens = mAccountCredentialCache.getCredentialsFilteredBy(
-                account.getHomeAccountId(),
-                account.getEnvironment(),
-                IdToken,
-                clientId,
-                null, //wildcard (*)
-                null, //wildcard (*)
-                account.getRealm(),
-                null, // wildcard (*),
-                null, // not applicable
-                allCredentials
-        );
-
-        // Load the v1 IdTokens
-        final List<Credential> v1IdTokens = mAccountCredentialCache.getCredentialsFilteredBy(
-                account.getHomeAccountId(),
-                account.getEnvironment(),
-                CredentialType.V1IdToken,
-                clientId,
-                null, //wildcard (*)
-                null, //wildcard (*)
-                account.getRealm(),
-                null, // wildcard (*)
-                null, // not applicable
-                allCredentials
-        );
 
         final CacheRecord.CacheRecordBuilder result = CacheRecord.builder();
         result.account(account);
@@ -944,25 +961,36 @@ public class MsalOAuth2TokenCache
                                                            @NonNull AccountRecord accountRecord) {
         final List<IdTokenRecord> result = new ArrayList<>();
 
-        // Load all the credentials to inspect once, such that we don't need to requery the cache
-        // pass these into the new getCredentialsFilteredBy overload, rather than hit disk again
-        final List<Credential> allCredentials = mAccountCredentialCache.getCredentials();
+        final boolean useFilterThenClone = CommonFlightsManager.INSTANCE
+                .getFlightsProvider()
+                .isFlightEnabled(CommonFlight.ENABLE_FILTER_THEN_CLONE_IN_MEMORY_CACHE)
+                && CommonFlightsManager.INSTANCE
+                .getFlightsProvider()
+                .isFlightEnabled(CommonFlight.USE_IN_MEMORY_CACHE_FOR_ACCOUNTS_AND_CREDENTIALS);
 
-        final List<Credential> idTokens = mAccountCredentialCache.getCredentialsFilteredBy(
-                accountRecord.getHomeAccountId(),
-                accountRecord.getEnvironment(),
-                IdToken,
-                clientId, // If null, behaves as wildcard
-                null,
-                null,
-                accountRecord.getRealm(),
-                null, // wildcard (*),
-                null, // not applicable
-                allCredentials
-        );
+        final List<Credential> idTokens;
 
-        idTokens.addAll(
-                mAccountCredentialCache.getCredentialsFilteredBy(
+        // See the same instanceof guard in load() for a full explanation of why the cache type
+        // may not match the flight state at runtime.
+        if (useFilterThenClone
+                && mAccountCredentialCache instanceof SharedPreferencesAccountCredentialCacheWithMemoryCache) {
+            // Wrap under one lock for snapshot consistency (same rationale as load()).
+            final Object cacheLock = ((SharedPreferencesAccountCredentialCacheWithMemoryCache)
+                    mAccountCredentialCache).getCacheLock();
+            synchronized (cacheLock) {
+                idTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                        accountRecord.getHomeAccountId(),
+                        accountRecord.getEnvironment(),
+                        IdToken,
+                        clientId, // If null, behaves as wildcard
+                        null,
+                        null,
+                        accountRecord.getRealm(),
+                        null, // wildcard (*),
+                        null // not applicable
+                );
+
+                idTokens.addAll(mAccountCredentialCache.getCredentialsFilteredBy(
                         accountRecord.getHomeAccountId(),
                         accountRecord.getEnvironment(),
                         CredentialType.V1IdToken,
@@ -971,10 +999,42 @@ public class MsalOAuth2TokenCache
                         null, //wildcard (*)
                         accountRecord.getRealm(),
                         null, // wildcard (*)
-                        null, // not applicable
-                        allCredentials
-                )
-        );
+                        null // not applicable
+                ));
+            }
+        } else {
+            // Legacy path: preload all credentials (clone-all) once,
+            // then filter the pre-cloned list multiple times.
+            final List<Credential> allCredentials = mAccountCredentialCache.getCredentials();
+
+            idTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                    accountRecord.getHomeAccountId(),
+                    accountRecord.getEnvironment(),
+                    IdToken,
+                    clientId, // If null, behaves as wildcard
+                    null,
+                    null,
+                    accountRecord.getRealm(),
+                    null, // wildcard (*),
+                    null, // not applicable
+                    allCredentials
+            );
+
+            idTokens.addAll(
+                    mAccountCredentialCache.getCredentialsFilteredBy(
+                            accountRecord.getHomeAccountId(),
+                            accountRecord.getEnvironment(),
+                            CredentialType.V1IdToken,
+                            clientId,
+                            null, //wildcard (*)
+                            null, //wildcard (*)
+                            accountRecord.getRealm(),
+                            null, // wildcard (*)
+                            null, // not applicable
+                            allCredentials
+                    )
+            );
+        }
 
         for (final Credential credential : idTokens) {
             if (credential instanceof IdTokenRecord) {
@@ -1092,17 +1152,41 @@ public class MsalOAuth2TokenCache
                                                     @NonNull final String clientId,
                                                     @NonNull final String localAccountId) {
         final String methodName = ":getAccountByLocalAccountId";
-
-        final List<AccountRecord> accounts = getAccounts(environment, clientId);
-
         Logger.verbosePII(
                 TAG + methodName,
                 "LocalAccountId: [" + localAccountId + "]"
         );
 
-        for (final AccountRecord account : accounts) {
-            if (localAccountId.equals(account.getLocalAccountId())) {
-                return account;
+        final List<AccountRecord> accountRecordList = mAccountCredentialCache.getAccounts();
+        if (accountRecordList.isEmpty()) {
+            Logger.warn(
+                    TAG + methodName,
+                    "No accounts found in the cache."
+            );
+            return null;
+        }
+
+        final Set<CredentialType> credentialTypes = new HashSet<>(
+                Arrays.asList(IdToken, V1IdToken, RefreshToken)
+        );
+
+        final List<Credential> appCredentials = mAccountCredentialCache.getCredentialsFilteredBy(
+                null, // homeAccountId
+                environment,
+                credentialTypes,
+                clientId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+
+        for (final AccountRecord accountRecord: accountRecordList) {
+            if (accountRecord.getLocalAccountId().equals(localAccountId)
+                        && accountHasCredential(accountRecord, appCredentials)) {
+                return accountRecord;
             }
         }
 
@@ -1228,6 +1312,10 @@ public class MsalOAuth2TokenCache
                 TAG + methodName,
                 "Found " + accountsForEnvironment.size() + " accounts for this environment"
         );
+
+        if (accountsForEnvironment.isEmpty()) {
+            return Collections.unmodifiableList(accountsForThisApp);
+        }
 
         final Set<CredentialType> credentialTypes = new HashSet<>(
                 Arrays.asList(IdToken, V1IdToken, RefreshToken)
@@ -1713,21 +1801,46 @@ public class MsalOAuth2TokenCache
     private void deleteAccessTokensWithIntersectingScopes(
             final AccessTokenRecord referenceToken, boolean mustMatchExactClaims) {
         final String methodName = "deleteAccessTokensWithIntersectingScopes";
+        final long startTimeNanos = System.nanoTime();
 
-        final List<Credential> accessTokens = mAccountCredentialCache.getCredentialsFilteredBy(
-                referenceToken.getHomeAccountId(),
-                referenceToken.getEnvironment(),
-                CredentialType.fromString(referenceToken.getCredentialType()),
-                referenceToken.getClientId(),
-                referenceToken.getApplicationIdentifier(),
-                referenceToken.getMamEnrollmentIdentifier(),
-                referenceToken.getRealm(),
-                null, // Wildcard (*)
-                referenceToken.getAccessTokenType(),
-                referenceToken.getRequestedClaims(),
-                mustMatchExactClaims,
-                mAccountCredentialCache.getCredentials()
-        );
+        final boolean useFilterThenClone = CommonFlightsManager.INSTANCE
+                .getFlightsProvider()
+                .isFlightEnabled(CommonFlight.ENABLE_FILTER_THEN_CLONE_IN_MEMORY_CACHE);
+
+        final List<Credential> accessTokens;
+
+        if (useFilterThenClone) {
+            // Filter-then-clone: use the direct overload that reads from cache
+            // and clones only matching credentials.
+            accessTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                    referenceToken.getHomeAccountId(),
+                    referenceToken.getEnvironment(),
+                    CredentialType.fromString(referenceToken.getCredentialType()),
+                    referenceToken.getClientId(),
+                    referenceToken.getApplicationIdentifier(),
+                    referenceToken.getMamEnrollmentIdentifier(),
+                    referenceToken.getRealm(),
+                    null, // Wildcard (*)
+                    referenceToken.getAccessTokenType(),
+                    referenceToken.getRequestedClaims()
+            );
+        } else {
+            // Legacy path: clone all credentials, then filter.
+            accessTokens = mAccountCredentialCache.getCredentialsFilteredBy(
+                    referenceToken.getHomeAccountId(),
+                    referenceToken.getEnvironment(),
+                    CredentialType.fromString(referenceToken.getCredentialType()),
+                    referenceToken.getClientId(),
+                    referenceToken.getApplicationIdentifier(),
+                    referenceToken.getMamEnrollmentIdentifier(),
+                    referenceToken.getRealm(),
+                    null, // Wildcard (*)
+                    referenceToken.getAccessTokenType(),
+                    referenceToken.getRequestedClaims(),
+                    mustMatchExactClaims,
+                    mAccountCredentialCache.getCredentials()
+            );
+        }
 
         Logger.verbose(
                 TAG + ":" + methodName,
@@ -1743,6 +1856,11 @@ public class MsalOAuth2TokenCache
                 mAccountCredentialCache.removeCredential(accessToken);
             }
         }
+
+        OTelUtility.recordElapsedTimeFromNanos(
+                AttributeName.elapsed_time_cache_delete_access_tokens_with_intersecting_scopes.name(),
+                startTimeNanos
+        );
     }
 
     private boolean scopesIntersect(final AccessTokenRecord token1,

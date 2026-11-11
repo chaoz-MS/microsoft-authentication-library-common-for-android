@@ -45,17 +45,19 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-
-import android.content.Context;
 
 import androidx.test.core.app.ApplicationProvider;
 
-import com.microsoft.identity.common.components.AndroidPlatformComponentsFactory;
 import com.microsoft.identity.common.components.MockPlatformComponentsFactory;
 import com.microsoft.identity.common.internal.platform.AndroidPlatformUtil;
 import com.microsoft.identity.common.java.cache.BrokerApplicationMetadata;
 import com.microsoft.identity.common.java.cache.BrokerOAuth2TokenCache;
+import com.microsoft.identity.common.java.cache.BrokerOAuth2TokenCacheTelemetryWrapper;
 import com.microsoft.identity.common.java.cache.CacheKeyValueDelegate;
 import com.microsoft.identity.common.java.cache.IAccountCredentialAdapter;
 import com.microsoft.identity.common.java.cache.IAccountCredentialCache;
@@ -66,9 +68,12 @@ import com.microsoft.identity.common.java.cache.NameValueStorageBrokerApplicatio
 import com.microsoft.identity.common.java.cache.SharedPreferencesAccountCredentialCache;
 import com.microsoft.identity.common.java.cache.AccountDeletionRecord;
 import com.microsoft.identity.common.java.cache.ICacheRecord;
+import com.microsoft.identity.common.java.dto.AccessTokenRecord;
 import com.microsoft.identity.common.java.dto.AccountRecord;
 import com.microsoft.identity.common.java.dto.Credential;
 import com.microsoft.identity.common.java.dto.CredentialType;
+import com.microsoft.identity.common.java.dto.IdTokenRecord;
+import com.microsoft.identity.common.java.dto.RefreshTokenRecord;
 import com.microsoft.identity.common.java.exception.ClientException;
 import com.microsoft.identity.common.java.interfaces.INameValueStorage;
 import com.microsoft.identity.common.java.interfaces.IPlatformComponents;
@@ -281,7 +286,7 @@ public class BrokerOAuth2TokenCacheTest {
     }
 
     private List<INameValueStorage<String>> getAppUidFileManagers(final IPlatformComponents components,
-                                                         final int[] testAppUids) {
+                                                                  final int[] testAppUids) {
         final List<INameValueStorage<String>> fileManagers = new ArrayList<>();
 
         for (final int currentAppUid : testAppUids) {
@@ -472,6 +477,508 @@ public class BrokerOAuth2TokenCacheTest {
         assertNotNull(fociCacheRecords);
         assertTrue(fociCacheRecords.isEmpty());
     }
+
+    // region getAccountsWithAggregatedAccountData FoCI caller-authorization gate (AB#3687466)
+
+    /**
+     * Builds a BrokerOAuth2TokenCache scoped to a different unix uid, sharing the same application
+     * metadata cache and FoCI cache, with an explicit FoCI-read authorization gate — used to
+     * simulate broker's secure-by-default construction of unauthorized vs authorized caller caches
+     * (AB#3687466).
+     */
+    private BrokerOAuth2TokenCache newBrokerCacheForUid(final int uid,
+                                                        final boolean callerAuthorizedForFoci) {
+        return new BrokerOAuth2TokenCache(
+                mPlatformComponents,
+                uid,
+                mApplicationMetadataCache,
+                new BrokerOAuth2TokenCache.ProcessUidCacheFactory() {
+                    @Override
+                    public MsalOAuth2TokenCache getTokenCache(final IPlatformComponents context,
+                                                              final int bindingProcessUid) {
+                        return initAppUidCache(context, bindingProcessUid);
+                    }
+                },
+                mFociCache,
+                callerAuthorizedForFoci
+        );
+    }
+
+    /**
+     * An authorized caller (cache built with callerAuthorizedForFoci == true) receives the
+     * device-wide shared FoCI accounts. This is the pre-fix behavior preserved for authorized
+     * (family) apps.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testGetAccountsWithAggregatedAccountDataFociAuthorizedIncludesSharedFociAccounts()
+            throws ClientException {
+        configureMocksForFoci();
+        final ICacheRecord saved = mBrokerOAuth2TokenCache.save(mockStrategy, mockRequest, mockResponse);
+        final String clientId = saved.getRefreshToken().getClientId();
+
+        // Simulate a different app (uid) than the one that saved the FoCI account; authorized.
+        final BrokerOAuth2TokenCache callerCache = newBrokerCacheForUid(TEST_APP_UID + 1, true);
+
+        final List<ICacheRecord> accounts =
+                callerCache.getAccountsWithAggregatedAccountData(null, clientId);
+
+        assertNotNull(accounts);
+        assertFalse(accounts.isEmpty());
+        assertEquals(
+                saved.getAccount().getHomeAccountId(),
+                accounts.get(0).getAccount().getHomeAccountId()
+        );
+    }
+
+    /**
+     * Core fix (AB#3687466): an unauthorized caller (cache built with callerAuthorizedForFoci ==
+     * false) that has no FoCI token of its own must NOT be able to enumerate another app's shared
+     * FoCI accounts.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testGetAccountsWithAggregatedAccountDataFociUnauthorizedExcludesSharedFociAccounts()
+            throws ClientException {
+        configureMocksForFoci();
+        final ICacheRecord saved = mBrokerOAuth2TokenCache.save(mockStrategy, mockRequest, mockResponse);
+        final String clientId = saved.getRefreshToken().getClientId();
+
+        final BrokerOAuth2TokenCache callerCache = newBrokerCacheForUid(TEST_APP_UID + 1, false);
+
+        final List<ICacheRecord> accounts =
+                callerCache.getAccountsWithAggregatedAccountData(null, clientId);
+
+        assertNotNull(accounts);
+        assertTrue(accounts.isEmpty());
+    }
+
+    /**
+     * Fail-closed on the environment-scoped path: an unauthorized caller with no owned cache for the
+     * client id must not fall back to the shared FoCI cache; whereas an authorized caller still does.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testGetAccountsWithAggregatedAccountDataFociWithEnvironmentGatesFallback()
+            throws ClientException {
+        configureMocksForFoci();
+        final ICacheRecord saved = mBrokerOAuth2TokenCache.save(mockStrategy, mockRequest, mockResponse);
+        final String clientId = saved.getRefreshToken().getClientId();
+
+        final BrokerOAuth2TokenCache unauthorizedCallerCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, false);
+        final List<ICacheRecord> unauthorized =
+                unauthorizedCallerCache.getAccountsWithAggregatedAccountData(ENVIRONMENT, clientId);
+        assertNotNull(unauthorized);
+        assertTrue(unauthorized.isEmpty());
+
+        final BrokerOAuth2TokenCache authorizedCallerCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        final List<ICacheRecord> authorized =
+                authorizedCallerCache.getAccountsWithAggregatedAccountData(ENVIRONMENT, clientId);
+        assertNotNull(authorized);
+        assertFalse(authorized.isEmpty());
+    }
+
+    /**
+     * Critical guardrail: gating only affects shared FoCI accounts. A caller's own (non-FoCI,
+     * UID-partitioned) accounts are always returned, even when the cache was built with
+     * callerAuthorizedForFoci == false.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testGetAccountsWithAggregatedAccountDataNonFociUnauthorizedReturnsOwnAccounts()
+            throws ClientException {
+        configureMocksForAppUid();
+        final ICacheRecord saved = mBrokerOAuth2TokenCache.save(mockStrategy, mockRequest, mockResponse);
+        final String clientId = saved.getRefreshToken().getClientId();
+
+        // Same uid (TEST_APP_UID) that owns the account, but build the cache as unauthorized to
+        // prove the gate does not withhold own (non-FoCI) accounts.
+        final BrokerOAuth2TokenCache unauthorizedOwnerCache =
+                newBrokerCacheForUid(TEST_APP_UID, false);
+        final List<ICacheRecord> accounts =
+                unauthorizedOwnerCache.getAccountsWithAggregatedAccountData(null, clientId);
+
+        assertNotNull(accounts);
+        assertFalse(accounts.isEmpty());
+        assertEquals(
+                saved.getAccount().getHomeAccountId(),
+                accounts.get(0).getAccount().getHomeAccountId()
+        );
+    }
+
+    /**
+     * Regression test for AB#3687466: an unauthorized caller that has its own FoCI metadata row for
+     * the requested client id must still be blocked from enumerating the device-wide shared FoCI
+     * cache on the environment-scoped path. Prior to the fix, {@code getTokenCacheForClient(id, env,
+     * uid)} would resolve directly to {@code mFociCache} for such a caller, bypassing the null-fallback
+     * gate and returning shared FoCI accounts.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testGetAccountsWithAggregatedAccountDataFociUnauthorizedWithOwnFociRowExcludesSharedAccounts()
+            throws ClientException {
+        // App A (TEST_APP_UID) saves a FoCI account -> populates the shared FoCI cache and its own
+        // FoCI metadata row.
+        configureMocksForFoci();
+        final ICacheRecord saved = mBrokerOAuth2TokenCache.save(mockStrategy, mockRequest, mockResponse);
+        final String clientId = saved.getRefreshToken().getClientId();
+
+        // App B (TEST_APP_UID + 1) also saves a FoCI account under the same client id, so it too
+        // owns a FoCI metadata row for (clientId, ENVIRONMENT, TEST_APP_UID + 1). This is the
+        // combination that made getTokenCacheForClient(id, env, uid) resolve to mFociCache and
+        // bypass the prior null-targetCache gate. First save via an authorized instance so the
+        // save-time FoCI path is not itself gated.
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        authorizedAppBCache.save(mockStrategy, mockRequest, mockResponse);
+
+        // Now attack: App B built as unauthorized, environment-scoped read must return empty.
+        final BrokerOAuth2TokenCache unauthorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, false);
+        final List<ICacheRecord> unauthorized =
+                unauthorizedAppBCache.getAccountsWithAggregatedAccountData(ENVIRONMENT, clientId);
+        assertNotNull(unauthorized);
+        assertTrue(unauthorized.isEmpty());
+
+        // Sanity: authorized caller in the same setup still receives the shared FoCI accounts.
+        final List<ICacheRecord> authorized =
+                authorizedAppBCache.getAccountsWithAggregatedAccountData(ENVIRONMENT, clientId);
+        assertNotNull(authorized);
+        assertFalse(authorized.isEmpty());
+    }
+
+    /**
+     * Regression tests for AB#3687466 chokepoint #2: verify each env-scoped reader that resolves
+     * its target cache via {@link BrokerOAuth2TokenCache#getTokenCacheForClient} (the env!=null
+     * path) fail-closes on the shared FoCI cache for an unauthorized caller. Each test seeds a
+     * shared FoCI account for App A, seeds an owning FoCI metadata row for App B via an authorized
+     * instance, then attacks with App B constructed as unauthorized. Prior to the chokepoint fix,
+     * {@code getTokenCacheForClient(clientId, env, uid)} would resolve directly to {@code mFociCache}
+     * for such a caller, silently exposing the device-wide shared FoCI accounts on the env-scoped
+     * variants of getAccount / getAccountByLocalAccountId / getAccountByHomeAccountId /
+     * getAccounts(env, clientId) / getAccountsWithAggregatedAccountData(env, clientId, hai) /
+     * getAccountWithAggregatedAccountDataByLocalAccountId.
+     */
+    private BrokerOAuth2TokenCache seedFociAndReturnUnauthorizedAppBCache() throws ClientException {
+        configureMocksForFoci();
+        mBrokerOAuth2TokenCache.save(mockStrategy, mockRequest, mockResponse);
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        authorizedAppBCache.save(mockStrategy, mockRequest, mockResponse);
+        return newBrokerCacheForUid(TEST_APP_UID + 1, false);
+    }
+
+    @Test
+    public void testGetAccountEnvScopedFociUnauthorizedReturnsNull() throws ClientException {
+        final BrokerOAuth2TokenCache unauthorizedAppBCache = seedFociAndReturnUnauthorizedAppBCache();
+        final AccountRecord account = unauthorizedAppBCache.getAccount(
+                ENVIRONMENT,
+                CLIENT_ID,
+                HOME_ACCOUNT_ID,
+                REALM
+        );
+        assertNull(account);
+
+        // Positive control: authorized caller in the same setup still gets the account.
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        assertNotNull(authorizedAppBCache.getAccount(ENVIRONMENT, CLIENT_ID, HOME_ACCOUNT_ID, REALM));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testGetAccountsWithAggregatedAccountDataThreeArgEnvScopedFociUnauthorizedReturnsEmpty()
+            throws ClientException {
+        final BrokerOAuth2TokenCache unauthorizedAppBCache = seedFociAndReturnUnauthorizedAppBCache();
+        final List<ICacheRecord> unauthorized = unauthorizedAppBCache.getAccountsWithAggregatedAccountData(
+                ENVIRONMENT,
+                CLIENT_ID,
+                HOME_ACCOUNT_ID
+        );
+        assertNotNull(unauthorized);
+        assertTrue(unauthorized.isEmpty());
+
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        final List<ICacheRecord> authorized = authorizedAppBCache.getAccountsWithAggregatedAccountData(
+                ENVIRONMENT,
+                CLIENT_ID,
+                HOME_ACCOUNT_ID
+        );
+        assertNotNull(authorized);
+        assertFalse(authorized.isEmpty());
+    }
+
+    @Test
+    public void testGetAccountByLocalAccountIdEnvScopedFociUnauthorizedReturnsNull() throws ClientException {
+        final BrokerOAuth2TokenCache unauthorizedAppBCache = seedFociAndReturnUnauthorizedAppBCache();
+        final AccountRecord account = unauthorizedAppBCache.getAccountByLocalAccountId(
+                ENVIRONMENT,
+                CLIENT_ID,
+                LOCAL_ACCOUNT_ID
+        );
+        assertNull(account);
+
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        assertNotNull(
+                authorizedAppBCache.getAccountByLocalAccountId(ENVIRONMENT, CLIENT_ID, LOCAL_ACCOUNT_ID)
+        );
+    }
+
+    @Test
+    public void testGetAccountWithAggregatedAccountDataByLocalAccountIdEnvScopedFociUnauthorizedReturnsNull()
+            throws ClientException {
+        final BrokerOAuth2TokenCache unauthorizedAppBCache = seedFociAndReturnUnauthorizedAppBCache();
+        final ICacheRecord record = unauthorizedAppBCache.getAccountWithAggregatedAccountDataByLocalAccountId(
+                ENVIRONMENT,
+                CLIENT_ID,
+                LOCAL_ACCOUNT_ID
+        );
+        assertNull(record);
+
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        assertNotNull(
+                authorizedAppBCache.getAccountWithAggregatedAccountDataByLocalAccountId(
+                        ENVIRONMENT, CLIENT_ID, LOCAL_ACCOUNT_ID)
+        );
+    }
+
+    @Test
+    public void testGetAccountsEnvScopedFociUnauthorizedReturnsEmpty() throws ClientException {
+        final BrokerOAuth2TokenCache unauthorizedAppBCache = seedFociAndReturnUnauthorizedAppBCache();
+        final List<AccountRecord> unauthorized = unauthorizedAppBCache.getAccounts(ENVIRONMENT, CLIENT_ID);
+        assertNotNull(unauthorized);
+        assertTrue(unauthorized.isEmpty());
+
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        final List<AccountRecord> authorized = authorizedAppBCache.getAccounts(ENVIRONMENT, CLIENT_ID);
+        assertNotNull(authorized);
+        assertFalse(authorized.isEmpty());
+    }
+
+    @Test
+    public void testGetAccountByHomeAccountIdEnvScopedFociUnauthorizedReturnsNull() throws ClientException {
+        final BrokerOAuth2TokenCache unauthorizedAppBCache = seedFociAndReturnUnauthorizedAppBCache();
+        final AccountRecord account = unauthorizedAppBCache.getAccountByHomeAccountId(
+                ENVIRONMENT,
+                CLIENT_ID,
+                HOME_ACCOUNT_ID
+        );
+        assertNull(account);
+
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        assertNotNull(
+                authorizedAppBCache.getAccountByHomeAccountId(ENVIRONMENT, CLIENT_ID, HOME_ACCOUNT_ID)
+        );
+    }
+
+    /**
+     * Regression test for AB#3687466 (Round 7): {@link BrokerOAuth2TokenCache#load} must not
+     * fall back to the shared FoCI cache when Chokepoint #2 returned {@code null} for an
+     * unauthorized caller. Prior to the loader gate, {@code shouldUseFociCache =
+     * (null == targetCache || isKnownFoci)} treated the fail-closed null as the trigger
+     * that routed execution into {@code mFociCache.loadByFamilyId}, leaking the victim's
+     * family RT.
+     */
+    @Test
+    public void testLoadEnvScopedFociUnauthorizedReturnsSparseRecord() throws ClientException {
+        final BrokerOAuth2TokenCache unauthorizedAppBCache = seedFociAndReturnUnauthorizedAppBCache();
+
+        final ICacheRecord unauthorized = unauthorizedAppBCache.load(
+                CLIENT_ID,
+                APPLICATION_IDENTIFIER_SHA512,
+                MAM_ENROLLMENT_IDENTIFIER,
+                TARGET,
+                mDefaultFociTestBundle.mGeneratedAccount,
+                BEARER_AUTHENTICATION_SCHEME
+        );
+        assertNotNull(unauthorized);
+        assertNotNull(unauthorized.getAccount());
+        assertNull("Unauthorized caller must not receive shared FoCI RT.",
+                unauthorized.getRefreshToken());
+        assertNull(unauthorized.getAccessToken());
+        assertNull(unauthorized.getIdToken());
+
+        // Positive control: authorized caller in the same setup still gets the RT.
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        final ICacheRecord authorized = authorizedAppBCache.load(
+                CLIENT_ID,
+                APPLICATION_IDENTIFIER_SHA512,
+                MAM_ENROLLMENT_IDENTIFIER,
+                TARGET,
+                mDefaultFociTestBundle.mGeneratedAccount,
+                BEARER_AUTHENTICATION_SCHEME
+        );
+        assertNotNull(authorized.getRefreshToken());
+    }
+
+    /**
+     * Regression test for AB#3687466 (Round 7): {@link BrokerOAuth2TokenCache#loadWithAggregatedAccountData}
+     * must return a sparse singleton (NOT an empty list) for an unauthorized caller.
+     * {@code BrokerLocalController.acquireTokenSilent} calls {@code accountWithProfiles.get(0)}
+     * immediately after; an empty list would throw {@code IndexOutOfBoundsException} instead
+     * of the intended {@code UiRequiredException} downstream.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testLoadWithAggregatedAccountDataEnvScopedFociUnauthorizedReturnsSparseSingleton()
+            throws ClientException {
+        final BrokerOAuth2TokenCache unauthorizedAppBCache = seedFociAndReturnUnauthorizedAppBCache();
+
+        final List<ICacheRecord> unauthorized = unauthorizedAppBCache.loadWithAggregatedAccountData(
+                CLIENT_ID,
+                APPLICATION_IDENTIFIER_SHA512,
+                MAM_ENROLLMENT_IDENTIFIER,
+                TARGET,
+                mDefaultFociTestBundle.mGeneratedAccount,
+                BEARER_AUTHENTICATION_SCHEME
+        );
+        assertNotNull(unauthorized);
+        assertEquals("Contract: primary record must exist (get(0) is called downstream).",
+                1, unauthorized.size());
+        assertNotNull(unauthorized.get(0).getAccount());
+        assertNull("Unauthorized caller must not receive shared FoCI RT.",
+                unauthorized.get(0).getRefreshToken());
+
+        // Positive control: authorized caller still receives an aggregated record with RT.
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        final List<ICacheRecord> authorized = authorizedAppBCache.loadWithAggregatedAccountData(
+                CLIENT_ID,
+                APPLICATION_IDENTIFIER_SHA512,
+                MAM_ENROLLMENT_IDENTIFIER,
+                TARGET,
+                mDefaultFociTestBundle.mGeneratedAccount,
+                BEARER_AUTHENTICATION_SCHEME
+        );
+        assertFalse(authorized.isEmpty());
+        assertNotNull(authorized.get(0).getRefreshToken());
+    }
+
+    /**
+     * Regression test for AB#3687466: the plain three-arg
+     * {@code saveAndLoadAggregatedAccountData(strategy, request, response)} overload selects its
+     * target cache directly from the server-supplied {@code familyId}, bypassing both FoCI
+     * chokepoints, and delegates to
+     * {@link MsalOAuth2TokenCache#saveAndLoadAggregatedAccountData} which performs a shared
+     * cross-tenant merge on {@code mFociCache}. Without the gate, an unauthorized FoCI caller
+     * could receive other apps' FoCI records for the same home account through that merge.
+     * Assert that only the just-saved record is returned. This overload is also reachable via
+     * {@code BrokerOAuth2TokenCacheTelemetryWrapper}.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testSaveAndLoadAggregatedAccountDataPlainFociUnauthorizedReturnsJustSavedRecord()
+            throws ClientException {
+        // Seed the shared FoCI cache with App A + a family record for App B under the
+        // authorized instance so aggregation would otherwise return > 1 record.
+        configureMocksForFoci();
+        mBrokerOAuth2TokenCache.save(mockStrategy, mockRequest, mockResponse);
+        final BrokerOAuth2TokenCache authorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, true);
+        authorizedAppBCache.save(mockStrategy, mockRequest, mockResponse);
+
+        final BrokerOAuth2TokenCache unauthorizedAppBCache =
+                newBrokerCacheForUid(TEST_APP_UID + 1, false);
+
+        final List<ICacheRecord> unauthorized =
+                unauthorizedAppBCache.saveAndLoadAggregatedAccountData(
+                        mockStrategy,
+                        mockRequest,
+                        mockResponse
+                );
+        assertNotNull(unauthorized);
+        assertEquals("Unauthorized FoCI caller must receive only the just-saved record.",
+                1, unauthorized.size());
+        assertNotNull(unauthorized.get(0).getRefreshToken());
+    }
+
+    /**
+     * Regression: {@link BrokerOAuth2TokenCacheTelemetryWrapper#getFociCacheRecords()} must
+     * delegate to the wrapped cache. Spies the wrapped cache and verifies the delegate is
+     * invoked; asserting emptiness alone would tautologically pass even if the override were
+     * removed, because the wrapper's inherited super gate ({@code mCallerAuthorizedForFoci=false})
+     * would short-circuit the base implementation to empty regardless.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testTelemetryWrapperGetFociCacheRecordsUnauthorizedReturnsEmpty() throws ClientException {
+        final BrokerOAuth2TokenCache spyUnauthorizedCache = spy(seedFociAndReturnUnauthorizedAppBCache());
+        final BrokerOAuth2TokenCacheTelemetryWrapper wrapper = new BrokerOAuth2TokenCacheTelemetryWrapper(
+                mPlatformComponents,
+                TEST_APP_UID + 1,
+                mApplicationMetadataCache,
+                spyUnauthorizedCache,
+                /* callerAuthorizedForFoci= */ false
+        );
+
+        assertFalse(wrapper.isCallerAuthorizedForFoci());
+        assertTrue(wrapper.getFociCacheRecords().isEmpty());
+        verify(spyUnauthorizedCache, atLeastOnce()).getFociCacheRecords();
+
+        // Positive control: wrapper around an authorized cache exposes the shared FoCI records
+        // via the same delegation contract.
+        final BrokerOAuth2TokenCache spyAuthorizedCache =
+                spy(newBrokerCacheForUid(TEST_APP_UID + 1, true));
+        final BrokerOAuth2TokenCacheTelemetryWrapper authorizedWrapper = new BrokerOAuth2TokenCacheTelemetryWrapper(
+                mPlatformComponents,
+                TEST_APP_UID + 1,
+                mApplicationMetadataCache,
+                spyAuthorizedCache,
+                /* callerAuthorizedForFoci= */ true
+        );
+        assertTrue(authorizedWrapper.isCallerAuthorizedForFoci());
+        assertFalse(authorizedWrapper.getFociCacheRecords().isEmpty());
+        verify(spyAuthorizedCache, atLeastOnce()).getFociCacheRecords();
+    }
+
+    /**
+     * Same delegation invariant as
+     * {@link #testTelemetryWrapperGetFociCacheRecordsUnauthorizedReturnsEmpty()} but for
+     * {@link BrokerOAuth2TokenCacheTelemetryWrapper#getAccounts()}. The base implementation
+     * also gates its FoCI branch on {@code mCallerAuthorizedForFoci}, so the spy is required
+     * to distinguish real delegation from an inherited-gate short-circuit.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testTelemetryWrapperGetAccountsNoArgUnauthorizedReturnsEmpty() throws ClientException {
+        final BrokerOAuth2TokenCache spyUnauthorizedCache = spy(seedFociAndReturnUnauthorizedAppBCache());
+        final BrokerOAuth2TokenCacheTelemetryWrapper wrapper = new BrokerOAuth2TokenCacheTelemetryWrapper(
+                mPlatformComponents,
+                TEST_APP_UID + 1,
+                mApplicationMetadataCache,
+                spyUnauthorizedCache,
+                /* callerAuthorizedForFoci= */ false
+        );
+
+        assertFalse(wrapper.isCallerAuthorizedForFoci());
+        assertTrue(wrapper.getAccounts().isEmpty());
+        verify(spyUnauthorizedCache, atLeastOnce()).getAccounts();
+
+        // Positive control: wrapper around an authorized cache surfaces the shared FoCI accounts
+        // via the same delegation contract.
+        final BrokerOAuth2TokenCache spyAuthorizedCache =
+                spy(newBrokerCacheForUid(TEST_APP_UID + 1, true));
+        final BrokerOAuth2TokenCacheTelemetryWrapper authorizedWrapper = new BrokerOAuth2TokenCacheTelemetryWrapper(
+                mPlatformComponents,
+                TEST_APP_UID + 1,
+                mApplicationMetadataCache,
+                spyAuthorizedCache,
+                /* callerAuthorizedForFoci= */ true
+        );
+        assertTrue(authorizedWrapper.isCallerAuthorizedForFoci());
+        assertFalse(authorizedWrapper.getAccounts().isEmpty());
+        verify(spyAuthorizedCache, atLeastOnce()).getAccounts();
+    }
+
+    // endregion
 
     @Test
     @SuppressWarnings("unchecked")
@@ -898,7 +1405,8 @@ public class BrokerOAuth2TokenCacheTest {
         final BrokerOAuth2TokenCache brokerOAuth2TokenCache = new BrokerOAuth2TokenCache(
                 mPlatformComponents,
                 TEST_APP_UID,
-                new NameValueStorageBrokerApplicationMetadataCache(mPlatformComponents)
+                new NameValueStorageBrokerApplicationMetadataCache(mPlatformComponents),
+                /* callerAuthorizedForFoci= */ true
         );
 
         assertEquals(
@@ -909,73 +1417,13 @@ public class BrokerOAuth2TokenCacheTest {
         final BrokerOAuth2TokenCache brokerOAuth2TokenCache2 = new BrokerOAuth2TokenCache(
                 mPlatformComponents,
                 TEST_APP_UID,
-                new NameValueStorageBrokerApplicationMetadataCache(mPlatformComponents)
+                new NameValueStorageBrokerApplicationMetadataCache(mPlatformComponents),
+                /* callerAuthorizedForFoci= */ true
         );
 
         assertEquals(
                 xAppAccounts.size(),
                 brokerOAuth2TokenCache2.getAccounts().size()
-        );
-    }
-
-    @Test
-    public void testWPJSaveNonFoci_deprecated() throws ClientException {
-        final ICacheRecord saveResult = mBrokerOAuth2TokenCache.save(
-                mDefaultAppUidTestBundle.mGeneratedAccount,
-                mDefaultAppUidTestBundle.mGeneratedIdToken,
-                mDefaultAppUidTestBundle.mGeneratedAccessToken,
-                null
-        );
-
-        assertNotNull(saveResult);
-        assertNotNull(saveResult.getAccount());
-        assertNotNull(saveResult.getIdToken());
-        assertNotNull(saveResult.getAccessToken());
-        assertNull(saveResult.getRefreshToken());
-
-        assertEquals(
-                mDefaultAppUidTestBundle.mGeneratedAccount,
-                saveResult.getAccount()
-        );
-
-        assertEquals(
-                mDefaultAppUidTestBundle.mGeneratedIdToken,
-                saveResult.getIdToken()
-        );
-
-        assertEquals(
-                mDefaultAppUidTestBundle.mGeneratedAccessToken,
-                saveResult.getAccessToken()
-        );
-
-        final ICacheRecord retrievedResult = mBrokerOAuth2TokenCache.load(
-                mDefaultAppUidTestBundle.mGeneratedIdToken.getClientId(),
-                mDefaultAppUidTestBundle.mGeneratedAccessToken.getApplicationIdentifier(),
-                mDefaultAppUidTestBundle.mGeneratedAccessToken.getMamEnrollmentIdentifier(),
-                mDefaultAppUidTestBundle.mGeneratedAccessToken.getTarget(),
-                mDefaultAppUidTestBundle.mGeneratedAccount,
-                BEARER_AUTHENTICATION_SCHEME
-        );
-
-        assertNotNull(retrievedResult);
-        assertNotNull(retrievedResult.getAccount());
-        assertNotNull(retrievedResult.getIdToken());
-        assertNotNull(retrievedResult.getAccessToken());
-        assertNull(retrievedResult.getRefreshToken());
-
-        assertEquals(
-                mDefaultAppUidTestBundle.mGeneratedAccount,
-                retrievedResult.getAccount()
-        );
-
-        assertEquals(
-                mDefaultAppUidTestBundle.mGeneratedIdToken,
-                retrievedResult.getIdToken()
-        );
-
-        assertEquals(
-                mDefaultAppUidTestBundle.mGeneratedAccessToken,
-                retrievedResult.getAccessToken()
         );
     }
 
@@ -1048,68 +1496,6 @@ public class BrokerOAuth2TokenCacheTest {
         assertEquals(
                 mDefaultAppUidTestBundle.mGeneratedRefreshToken,
                 saveResult.getRefreshToken()
-        );
-    }
-
-    @Test
-    public void testWPJSaveFoci_deprecated() throws ClientException {
-        final ICacheRecord saveResult = mBrokerOAuth2TokenCache.save(
-                mDefaultFociTestBundle.mGeneratedAccount,
-                mDefaultFociTestBundle.mGeneratedIdToken,
-                mDefaultFociTestBundle.mGeneratedAccessToken,
-                "1"
-        );
-
-        assertNotNull(saveResult);
-        assertNotNull(saveResult.getAccount());
-        assertNotNull(saveResult.getIdToken());
-        assertNotNull(saveResult.getAccessToken());
-        assertNull(saveResult.getRefreshToken());
-
-        assertEquals(
-                mDefaultFociTestBundle.mGeneratedAccount,
-                saveResult.getAccount()
-        );
-
-        assertEquals(
-                mDefaultFociTestBundle.mGeneratedIdToken,
-                saveResult.getIdToken()
-        );
-
-        assertEquals(
-                mDefaultFociTestBundle.mGeneratedAccessToken,
-                saveResult.getAccessToken()
-        );
-
-
-        final ICacheRecord retrievedResult = mBrokerOAuth2TokenCache.load(
-                mDefaultFociTestBundle.mGeneratedIdToken.getClientId(),
-                mDefaultFociTestBundle.mGeneratedAccessToken.getApplicationIdentifier(),
-                mDefaultFociTestBundle.mGeneratedAccessToken.getMamEnrollmentIdentifier(),
-                mDefaultFociTestBundle.mGeneratedAccessToken.getTarget(),
-                mDefaultFociTestBundle.mGeneratedAccount,
-                BEARER_AUTHENTICATION_SCHEME
-        );
-
-        assertNotNull(retrievedResult);
-        assertNotNull(retrievedResult.getAccount());
-        assertNotNull(retrievedResult.getIdToken());
-        assertNotNull(retrievedResult.getAccessToken());
-        assertNull(retrievedResult.getRefreshToken());
-
-        assertEquals(
-                mDefaultFociTestBundle.mGeneratedAccount,
-                retrievedResult.getAccount()
-        );
-
-        assertEquals(
-                mDefaultFociTestBundle.mGeneratedIdToken,
-                retrievedResult.getIdToken()
-        );
-
-        assertEquals(
-                mDefaultFociTestBundle.mGeneratedAccessToken,
-                retrievedResult.getAccessToken()
         );
     }
 
@@ -1240,5 +1626,178 @@ public class BrokerOAuth2TokenCacheTest {
         for( final String clientId :clientIds) {
             assertEquals(false, mBrokerOAuth2TokenCache.isClientIdKnownToCache(clientId));
         }
+    }
+
+    @Test
+    public void testSaveAndLoadAggregatedAccountDataWithAggregationSkipped() throws ClientException {
+        // First, create guest tenant accounts to simulate multi-tenant scenario
+        final String guestRealm1 = "guest-tenant-1";
+        final String guestRealm2 = "guest-tenant-2";
+
+        // Create guest tenant 1 bundle
+        final MsalOAuth2TokenCacheTest.AccountCredentialTestBundle guestBundle1 =
+                createGuestBundle(guestRealm1);
+
+        // Create guest tenant 2 bundle
+        final MsalOAuth2TokenCacheTest.AccountCredentialTestBundle guestBundle2 =
+                createGuestBundle(guestRealm2);
+
+        // Save guest tenant records to cache using BrokerOAuth2TokenCache API
+        // This properly initializes the cache
+        mBrokerOAuth2TokenCache.save(
+                guestBundle1.mGeneratedAccount,
+                guestBundle1.mGeneratedIdToken,
+                guestBundle1.mGeneratedAccessToken,
+                guestBundle1.mGeneratedRefreshToken,
+                null // familyId
+        );
+
+        mBrokerOAuth2TokenCache.save(
+                guestBundle2.mGeneratedAccount,
+                guestBundle2.mGeneratedIdToken,
+                guestBundle2.mGeneratedAccessToken,
+                guestBundle2.mGeneratedRefreshToken,
+                null // familyId
+        );
+
+        // Now call saveAndLoadAggregatedAccountData with shouldSkipAccountAggregation = true
+        final AccountRecord accountRecord = mDefaultAppUidTestBundle.mGeneratedAccount;
+        final IdTokenRecord idTokenRecord = mDefaultAppUidTestBundle.mGeneratedIdToken;
+        final AccessTokenRecord accessTokenRecord = mDefaultAppUidTestBundle.mGeneratedAccessToken;
+        final RefreshTokenRecord refreshTokenRecord = mDefaultAppUidTestBundle.mGeneratedRefreshToken;
+        final String familyId = null; // Non-FOCI
+        final boolean shouldSkipAccountAggregation = true;
+
+        final List<ICacheRecord> result = mBrokerOAuth2TokenCache.saveAndLoadAggregatedAccountData(
+                accountRecord,
+                idTokenRecord,
+                accessTokenRecord,
+                refreshTokenRecord,
+                familyId,
+                BEARER_AUTHENTICATION_SCHEME,
+                shouldSkipAccountAggregation
+        );
+
+        // Verify the result - even though there are guest tenant records in cache,
+        // aggregation is skipped so only 1 record should be returned
+        assertNotNull(result);
+        assertEquals("Should return only the saved record without aggregation, ignoring guest tenants", 1, result.size());
+
+        // Verify the returned record contains the saved data (primary account)
+        final ICacheRecord cacheRecord = result.get(0);
+        assertNotNull(cacheRecord);
+        assertNotNull(cacheRecord.getAccount());
+        assertNotNull(cacheRecord.getIdToken());
+        assertNotNull(cacheRecord.getAccessToken());
+        assertNotNull(cacheRecord.getRefreshToken());
+
+        assertEquals(accountRecord, cacheRecord.getAccount());
+        assertEquals(idTokenRecord, cacheRecord.getIdToken());
+        assertEquals(accessTokenRecord, cacheRecord.getAccessToken());
+        assertEquals(refreshTokenRecord, cacheRecord.getRefreshToken());
+    }
+
+    @Test
+    public void testSaveAndLoadAggregatedAccountDataWithoutAggregationSkipped() throws ClientException {
+        // First, create guest tenant accounts to simulate multi-tenant scenario
+        final String guestRealm1 = "guest-tenant-1";
+        final String guestRealm2 = "guest-tenant-2";
+
+        // Create guest tenant 1 bundle
+
+        final MsalOAuth2TokenCacheTest.AccountCredentialTestBundle guestBundle1 =
+                createGuestBundle(guestRealm1);
+
+        // Create guest tenant 2 bundle
+        final MsalOAuth2TokenCacheTest.AccountCredentialTestBundle guestBundle2 =
+                createGuestBundle(guestRealm2);
+
+        // Save guest tenant records to cache using BrokerOAuth2TokenCache API
+        // This properly initializes the cache
+        mBrokerOAuth2TokenCache.save(
+                guestBundle1.mGeneratedAccount,
+                guestBundle1.mGeneratedIdToken,
+                guestBundle1.mGeneratedAccessToken,
+                guestBundle1.mGeneratedRefreshToken,
+                null // familyId
+        );
+
+        mBrokerOAuth2TokenCache.save(
+                guestBundle2.mGeneratedAccount,
+                guestBundle2.mGeneratedIdToken,
+                guestBundle2.mGeneratedAccessToken,
+                guestBundle2.mGeneratedRefreshToken,
+                null // familyId
+        );
+
+        // Now call saveAndLoadAggregatedAccountData with shouldSkipAccountAggregation = false
+        final AccountRecord accountRecord = mDefaultAppUidTestBundle.mGeneratedAccount;
+        final IdTokenRecord idTokenRecord = mDefaultAppUidTestBundle.mGeneratedIdToken;
+        final AccessTokenRecord accessTokenRecord = mDefaultAppUidTestBundle.mGeneratedAccessToken;
+        final RefreshTokenRecord refreshTokenRecord = mDefaultAppUidTestBundle.mGeneratedRefreshToken;
+        final String familyId = null; // Non-FOCI
+        final boolean shouldSkipAccountAggregation = false;
+
+        final List<ICacheRecord> result = mBrokerOAuth2TokenCache.saveAndLoadAggregatedAccountData(
+                accountRecord,
+                idTokenRecord,
+                accessTokenRecord,
+                refreshTokenRecord,
+                familyId,
+                BEARER_AUTHENTICATION_SCHEME,
+                shouldSkipAccountAggregation
+        );
+
+        // Verify the result - when aggregation is NOT skipped, should return primary + guest tenant records
+        assertNotNull(result);
+        // We expect: 1 primary account (realm=REALM) + 2 guest tenants (guestRealm1, guestRealm2) = 3 total
+        assertEquals("Should return primary account plus guest tenant accounts", 3, result.size());
+
+        // Verify the first record (index 0) is the primary account with matching realm
+        final ICacheRecord primaryRecord = result.get(0);
+        assertNotNull(primaryRecord);
+        assertNotNull(primaryRecord.getAccount());
+        assertEquals("Primary record should have the requested realm", REALM, primaryRecord.getAccount().getRealm());
+        assertNotNull(primaryRecord.getIdToken());
+        assertNotNull(primaryRecord.getAccessToken());
+        assertNotNull(primaryRecord.getRefreshToken());
+
+        // Verify guest tenant records are included (indices 1 and 2)
+        final ICacheRecord guestRecord1 = result.get(1);
+        final ICacheRecord guestRecord2 = result.get(2);
+
+        // Both guest records should have the same home account ID but different realms
+        assertEquals(HOME_ACCOUNT_ID, guestRecord1.getAccount().getHomeAccountId());
+        assertEquals(HOME_ACCOUNT_ID, guestRecord2.getAccount().getHomeAccountId());
+
+        // Verify guest realms are present (order may vary)
+        final String guestRealm1Result = guestRecord1.getAccount().getRealm();
+        final String guestRealm2Result = guestRecord2.getAccount().getRealm();
+        assertTrue("Guest realms should be present",
+                (guestRealm1Result.equals(guestRealm1) || guestRealm1Result.equals(guestRealm2)) &&
+                        (guestRealm2Result.equals(guestRealm1) || guestRealm2Result.equals(guestRealm2)));
+    }
+
+    private MsalOAuth2TokenCacheTest.AccountCredentialTestBundle createGuestBundle(String guestRealm) {
+        return new MsalOAuth2TokenCacheTest.AccountCredentialTestBundle(
+                MicrosoftAccount.AUTHORITY_TYPE_MS_STS,
+                LOCAL_ACCOUNT_ID,
+                USERNAME,
+                HOME_ACCOUNT_ID,
+                ENVIRONMENT,
+                guestRealm,
+                TARGET,
+                CACHED_AT,
+                EXPIRES_ON,
+                SECRET,
+                CLIENT_ID,
+                APPLICATION_IDENTIFIER_SHA512,
+                MAM_ENROLLMENT_IDENTIFIER,
+                SECRET,
+                MOCK_ID_TOKEN_WITH_CLAIMS,
+                null,
+                SESSION_KEY,
+                CredentialType.IdToken
+        );
     }
 }

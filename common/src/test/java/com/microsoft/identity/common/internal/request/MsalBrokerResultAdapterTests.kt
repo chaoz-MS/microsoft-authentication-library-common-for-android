@@ -24,16 +24,21 @@ package com.microsoft.identity.common.internal.request
 
 import com.microsoft.identity.common.adal.internal.AuthenticationConstants
 import com.microsoft.identity.common.internal.broker.BrokerResult
+import com.microsoft.identity.common.internal.cache.ActiveBrokerCacheUpdater.Companion.ACTIVE_BROKER_PACKAGE_NAME_KEY
 import com.microsoft.identity.common.internal.result.MsalBrokerResultAdapter
 import com.microsoft.identity.common.internal.result.MsalBrokerResultAdapter.REMOVE_RT_FROM_AAD_RESULT_MSAL_PROTOCOL_VERSION
 import com.microsoft.identity.common.java.cache.CacheRecord
 import com.microsoft.identity.common.java.cache.ICacheRecord
+import com.microsoft.identity.common.java.commands.webapps.WebAppsAccountItem
+import com.microsoft.identity.common.java.commands.webapps.WebAppsGetTokenSubOperationResponse
 import com.microsoft.identity.common.java.dto.AadDeviceIdRecord
 import com.microsoft.identity.common.java.dto.AccountRecord
 import com.microsoft.identity.common.java.exception.ClientException
 import com.microsoft.identity.common.java.exception.UiRequiredException
 import com.microsoft.identity.common.java.request.SdkType
 import com.microsoft.identity.common.java.result.LocalAuthenticationResult
+import com.microsoft.identity.common.java.telemetry.ClientDataInfo
+import com.microsoft.identity.common.java.util.SchemaUtil
 import com.microsoft.identity.internal.testutils.MockRecords
 import lombok.SneakyThrows
 import org.junit.Assert
@@ -381,4 +386,557 @@ class MsalBrokerResultAdapterTests {
         assertEquals(mockErrorCode, receivedException.errorCode)
         assertEquals(mockErrorMessage, receivedException.message)
     }
+
+    @Test
+    fun testGetBrokerPerformanceMetricsFromBundle_WithValidTimestamps() {
+        val mockRequestReceivedTimestamp = 123456789L
+        val mockResponseGenerationTimestamp = 987654321L
+        val resultAdapter = MsalBrokerResultAdapter()
+
+        val resultBundle = android.os.Bundle().apply {
+            putLong(
+                com.microsoft.identity.common.java.AuthenticationConstants.Broker.BROKER_REQUEST_RECEIVED_TIMESTAMP,
+                mockRequestReceivedTimestamp
+            )
+            putLong(
+                com.microsoft.identity.common.java.AuthenticationConstants.Broker.BROKER_RESPONSE_GENERATION_TIMESTAMP,
+                mockResponseGenerationTimestamp
+            )
+        }
+
+        val metrics = resultAdapter.getBrokerPerformanceMetricsFromBundle(resultBundle)
+
+        assertNotNull(metrics)
+
+        // Validate timestamp values
+        assertEquals(mockRequestReceivedTimestamp, metrics!!.brokerRequestReceivedTimestamp)
+        assertEquals(mockResponseGenerationTimestamp, metrics.brokerResponseGenerationTimestamp)
+
+        // Validate calculated broker handling time
+        val expectedBrokerHandlingTime = mockResponseGenerationTimestamp - mockRequestReceivedTimestamp
+        assertEquals(expectedBrokerHandlingTime, metrics.brokerHandlingTime)
+
+        // Validate response latency (should be >= 0)
+        assertNotNull(metrics.responseLatency)
+        assertTrue(metrics.responseLatency >= 0)
+    }
+
+    @Test
+    fun testGetBrokerPerformanceMetricsFromBundle_WithoutTimestamps() {
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = android.os.Bundle() // Empty bundle, no timestamps
+        val metrics = resultAdapter.getBrokerPerformanceMetricsFromBundle(resultBundle)
+        assertNull(metrics)
+    }
+
+    @Test
+    @SneakyThrows
+    fun testGetBaseExceptionFromBundle_WithBrokerAppInfo() {
+        val mockErrorCode = "test_error"
+        val mockErrorMessage = "Test error message"
+        val mockBrokerVersion = "1.2.3"
+        val mockBrokerPackageName = "com.microsoft.broker"
+
+        val clientException = ClientException(mockErrorCode, mockErrorMessage)
+        val resultAdapter = MsalBrokerResultAdapter()
+
+        val resultBundle = resultAdapter.bundleFromBaseException(clientException, null).apply {
+            putString(AuthenticationConstants.Broker.BROKER_VERSION, mockBrokerVersion)
+            putString(AuthenticationConstants.Broker.BROKER_PACKAGE_NAME, mockBrokerPackageName)
+        }
+
+        val receivedException = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+
+        assertNotNull(receivedException)
+        assertEquals(mockErrorCode, receivedException.errorCode)
+        assertEquals(mockErrorMessage, receivedException.message)
+        assertEquals(mockBrokerVersion, receivedException.brokerAppVersion)
+        assertEquals(mockBrokerPackageName, receivedException.brokerAppPackageName)
+    }
+
+    @Test
+    @SneakyThrows
+    fun testGetBaseExceptionFromBundle_PrefersActiveBrokerPackageName() {
+        val activeBrokerPackageName = "com.microsoft.activebroker"
+        val clientException = ClientException("test_error", "Test error message")
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromBaseException(clientException, null).apply {
+            putString(AuthenticationConstants.Broker.BROKER_PACKAGE_NAME, "com.microsoft.legacybroker")
+            putString(ACTIVE_BROKER_PACKAGE_NAME_KEY, activeBrokerPackageName)
+        }
+
+        val receivedException = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+
+        assertEquals(activeBrokerPackageName, receivedException.brokerAppPackageName)
+    }
+
+    @Test
+    @SneakyThrows
+    fun testGetBaseExceptionFromBundle_FallsBackToBrokerPackageName() {
+        val brokerPackageName = "com.microsoft.legacybroker"
+        val clientException = ClientException("test_error", "Test error message").apply {
+            powerOptimizationSettings = "UNKNOWN"
+        }
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromBaseException(clientException, null).apply {
+            putString(AuthenticationConstants.Broker.BROKER_PACKAGE_NAME, brokerPackageName)
+        }
+
+        val receivedException = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+
+        assertEquals(brokerPackageName, receivedException.brokerAppPackageName)
+    }
+
+    @Test
+    @SneakyThrows
+    fun testGetBaseExceptionFromBundle_WithoutBrokerAppInfo() {
+        val mockErrorCode = "test_error"
+        val mockErrorMessage = "Test error message"
+
+        val clientException = ClientException(mockErrorCode, mockErrorMessage)
+        val resultAdapter = MsalBrokerResultAdapter()
+
+        val resultBundle = resultAdapter.bundleFromBaseException(clientException, null)
+
+        val receivedException = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+
+        assertNotNull(receivedException)
+        assertEquals(mockErrorCode, receivedException.errorCode)
+        assertEquals(mockErrorMessage, receivedException.message)
+        assertNull(receivedException.brokerAppVersion)
+        assertNull(receivedException.brokerAppPackageName)
+    }
+
+    // ==================== bundleFromAuthenticationResultForWebApps Tests ====================
+
+    /**
+     * Test that bundleFromAuthenticationResultForWebApps includes all required token fields
+     */
+    @Test
+    @SneakyThrows
+    fun testBundleFromAuthenticationResultForWebApps_ContainsAllRequiredFields() {
+        val mockCacheRecord = CacheRecord.builder()
+            .account(MockRecords.getMockAccountRecord_AAD())
+            .idToken(MockRecords.getMockIdTokenRecord_AAD())
+            .accessToken(MockRecords.getMockAccessTokenRecord_AAD())
+            .refreshToken(MockRecords.getMockRefreshTokenRecord_AAD())
+            .build()
+
+        val cacheRecords: MutableList<ICacheRecord> = ArrayList()
+        cacheRecords.add(mockCacheRecord)
+
+        val mockResult = LocalAuthenticationResult(
+            mockCacheRecord,
+            cacheRecords,
+            SdkType.MSAL,
+            false
+        )
+
+        val resultAdapter = getInstance()
+        val mockState = "field_validation_state"
+        val protocolVersion = null // Use null to ensure no compression
+
+        val resultBundle = resultAdapter.bundleFromAuthenticationResultForWebApps(
+            mockResult,
+            protocolVersion,
+            mockState
+        )
+
+        assertNotNull(resultBundle)
+        val resultString = resultBundle.getString(AuthenticationConstants.Broker.BROKER_WEB_APPS_SUCCESSFUL_RESULT)
+        assertNotNull(resultString)
+
+        // Verify the JSON contains expected fields
+        assertTrue(resultString!!.contains(WebAppsGetTokenSubOperationResponse.FIELD_STATE))
+        assertTrue(resultString.contains(WebAppsGetTokenSubOperationResponse.FIELD_EXPIRES_IN))
+        assertTrue(resultString.contains(WebAppsGetTokenSubOperationResponse.FIELD_CLIENT_INFO))
+        assertTrue(resultString.contains(WebAppsGetTokenSubOperationResponse.FIELD_ACCOUNT))
+        assertTrue(resultString.contains(WebAppsGetTokenSubOperationResponse.FIELD_ID_TOKEN))
+        assertTrue(resultString.contains(WebAppsGetTokenSubOperationResponse.FIELD_ACCESS_TOKEN))
+        assertTrue(resultString.contains(WebAppsGetTokenSubOperationResponse.FIELD_SCOPES))
+    }
+
+    /**
+     * Test that bundleFromAuthenticationResultForWebApps handles empty state string
+     */
+    @Test
+    @SneakyThrows
+    fun testBundleFromAuthenticationResultForWebApps_WithEmptyState_Success() {
+        val mockCacheRecord = CacheRecord.builder()
+            .account(MockRecords.getMockAccountRecord_AAD())
+            .idToken(MockRecords.getMockIdTokenRecord_AAD())
+            .accessToken(MockRecords.getMockAccessTokenRecord_AAD())
+            .refreshToken(MockRecords.getMockRefreshTokenRecord_AAD())
+            .build()
+
+        val cacheRecords: MutableList<ICacheRecord> = ArrayList()
+        cacheRecords.add(mockCacheRecord)
+
+        val mockResult = LocalAuthenticationResult(
+            mockCacheRecord,
+            cacheRecords,
+            SdkType.MSAL,
+            false
+        )
+
+        val resultAdapter = getInstance()
+        val protocolVersion = "10.0"
+
+        val resultBundle = resultAdapter.bundleFromAuthenticationResultForWebApps(
+            mockResult,
+            protocolVersion,
+            "" // empty state
+        )
+
+        assertNotNull(resultBundle)
+        assertTrue(resultBundle.containsKey(AuthenticationConstants.Broker.BROKER_WEB_APPS_SUCCESSFUL_RESULT_COMPRESSED))
+    }
+
+    /**
+     * Test that bundleFromAuthenticationResultForWebApps handles special characters in state
+     */
+    @Test
+    @SneakyThrows
+    fun testBundleFromAuthenticationResultForWebApps_WithSpecialCharactersInState_Success() {
+        val mockCacheRecord = CacheRecord.builder()
+            .account(MockRecords.getMockAccountRecord_AAD())
+            .idToken(MockRecords.getMockIdTokenRecord_AAD())
+            .accessToken(MockRecords.getMockAccessTokenRecord_AAD())
+            .refreshToken(MockRecords.getMockRefreshTokenRecord_AAD())
+            .build()
+
+        val cacheRecords: MutableList<ICacheRecord> = ArrayList()
+        cacheRecords.add(mockCacheRecord)
+
+        val mockResult = LocalAuthenticationResult(
+            mockCacheRecord,
+            cacheRecords,
+            SdkType.MSAL,
+            false
+        )
+
+        val resultAdapter = getInstance()
+        val mockState = "state_with_special_chars_!@#$%^&*()_+-={}[]|:;<>?,./"
+        val protocolVersion = "10.0"
+
+        val resultBundle = resultAdapter.bundleFromAuthenticationResultForWebApps(
+            mockResult,
+            protocolVersion,
+            mockState
+        )
+
+        assertNotNull(resultBundle)
+        assertTrue(resultBundle.containsKey(AuthenticationConstants.Broker.BROKER_WEB_APPS_SUCCESSFUL_RESULT_COMPRESSED))
+    }
+
+    /**
+     * Test that bundleFromAuthenticationResultForWebApps handles username being ".MISSING_FROM_THE_TOKEN_RESPONSE"
+     * In this case, username should be set to null in the WebAppsAccountItem
+     * This scenario occurs during lookup mode requests where ESTS sets id token to "none"
+     * and the username is not found in the cache
+     */
+    @Test
+    @SneakyThrows
+    fun testBundleFromAuthenticationResultForWebApps_WithMissingUsernameToken_SetsUsernameToNull() {
+        // Create a custom account record with username set to the special "missing" value
+        val accountRecordWithMissingUsername = AccountRecord()
+        accountRecordWithMissingUsername.username = SchemaUtil.MISSING_FROM_THE_TOKEN_RESPONSE
+        accountRecordWithMissingUsername.homeAccountId = "mock-home-account-id"
+        accountRecordWithMissingUsername.localAccountId = "mock-local-account-id"
+        accountRecordWithMissingUsername.clientInfo = "mock-client-info"
+        accountRecordWithMissingUsername.environment = "login.microsoftonline.com"
+        accountRecordWithMissingUsername.realm = "mock-tenant-id"
+
+        val mockCacheRecord = CacheRecord.builder()
+            .account(accountRecordWithMissingUsername)
+            .idToken(MockRecords.getMockIdTokenRecord_AAD())
+            .accessToken(MockRecords.getMockAccessTokenRecord_AAD())
+            .refreshToken(MockRecords.getMockRefreshTokenRecord_AAD())
+            .build()
+
+        val cacheRecords: MutableList<ICacheRecord> = ArrayList()
+        cacheRecords.add(mockCacheRecord)
+
+        val mockResult = LocalAuthenticationResult(
+            mockCacheRecord,
+            cacheRecords,
+            SdkType.MSAL,
+            false
+        )
+
+        val resultAdapter = getInstance()
+        val mockState = "lookup_mode_state"
+        val protocolVersion = null // Use null to ensure no compression for easier inspection
+
+        val resultBundle = resultAdapter.bundleFromAuthenticationResultForWebApps(
+            mockResult,
+            protocolVersion,
+            mockState
+        )
+
+        assertNotNull(resultBundle)
+        assertTrue(resultBundle.containsKey(AuthenticationConstants.Broker.BROKER_WEB_APPS_SUCCESSFUL_RESULT))
+
+        val resultString = resultBundle.getString(AuthenticationConstants.Broker.BROKER_WEB_APPS_SUCCESSFUL_RESULT)
+        assertNotNull(resultString)
+
+        // Verify the JSON structure is valid and contains expected fields
+        assertTrue(resultString!!.contains(WebAppsGetTokenSubOperationResponse.FIELD_STATE))
+        assertTrue(resultString.contains(mockState))
+        assertTrue(resultString.contains(WebAppsGetTokenSubOperationResponse.FIELD_ACCOUNT))
+        assertTrue(resultString.contains(WebAppsAccountItem.FIELD_HOME_ACCOUNT_ID))
+
+        // The username field in the account object should be null
+        // We verify that the special MISSING_FROM_THE_TOKEN_RESPONSE value is NOT in the result
+        Assert.assertFalse(
+            "Username should be null/absent, not the MISSING_FROM_THE_TOKEN_RESPONSE value",
+            resultString.contains(SchemaUtil.MISSING_FROM_THE_TOKEN_RESPONSE)
+        )
+    }
+
+    // ==================== ClientDataInfo IPC round-trip tests (PR #3109) ====================
+
+    private val clientDataRaw = "m|AADSTS50058|login_required|us|public"
+
+    private fun newCacheRecord() = CacheRecord.builder()
+        .account(MockRecords.getMockAccountRecord_AAD())
+        .idToken(MockRecords.getMockIdTokenRecord_AAD())
+        .accessToken(MockRecords.getMockAccessTokenRecord_AAD())
+        .refreshToken(MockRecords.getMockRefreshTokenRecord_AAD())
+        .build()
+
+    @Test
+    fun testClientDataInfo_RoundTripsThroughBrokerResult_OnSuccess() {
+        val cacheRecord = newCacheRecord()
+        val cacheRecords: MutableList<ICacheRecord> = arrayListOf(cacheRecord)
+        val authResult = LocalAuthenticationResult(cacheRecord, cacheRecords, SdkType.MSAL, false)
+        authResult.clientDataInfo = ClientDataInfo.fromPipeDelimited(clientDataRaw)
+
+        val brokerResult = getInstance().buildBrokerResultFromAuthenticationResult(authResult, "16.0")
+        assertEquals("Raw payload should be serialized into BrokerResult", clientDataRaw, brokerResult.clientDataInfoRaw)
+    }
+
+    @Test
+    fun testClientDataInfo_NullOnLocalAuthResult_ResultsInNullOnBrokerResult() {
+        val cacheRecord = newCacheRecord()
+        val cacheRecords: MutableList<ICacheRecord> = arrayListOf(cacheRecord)
+        val authResult = LocalAuthenticationResult(cacheRecord, cacheRecords, SdkType.MSAL, false)
+        // No ClientDataInfo set
+
+        val brokerResult = getInstance().buildBrokerResultFromAuthenticationResult(authResult, "16.0")
+        assertNull(brokerResult.clientDataInfoRaw)
+    }
+
+    @Test
+    fun testClientDataInfo_RoundTripsThroughBaseExceptionBundle() {
+        val exception = ClientException("invalid_grant", "token failure")
+        exception.clientDataInfo = ClientDataInfo.fromPipeDelimited(clientDataRaw)
+
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromBaseException(exception, null)
+        val brokerResult = resultAdapter.brokerResultFromBundle(resultBundle)
+        assertEquals(clientDataRaw, brokerResult.clientDataInfoRaw)
+
+        val received = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+        assertNotNull("ClientDataInfo should be reconstructed on the exception", received.clientDataInfo)
+        assertEquals("AADSTS50058", received.clientDataInfo!!.error)
+        assertEquals("login_required", received.clientDataInfo!!.subError)
+        assertEquals(clientDataRaw, received.clientDataInfo!!.raw)
+    }
+
+    @Test
+    fun testClientDataInfo_NullOnException_NotInBundle() {
+        val exception = ClientException("invalid_grant", "token failure")
+        // No ClientDataInfo set
+
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromBaseException(exception, null)
+        val received = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+        assertNull(received.clientDataInfo)
+    }
+
+    @Test
+    fun testClientDataInfo_RoundTripsThroughGetAcquireTokenResultFromResultBundle() {
+        val cacheRecord = newCacheRecord()
+        val cacheRecords: MutableList<ICacheRecord> = arrayListOf(cacheRecord)
+        val authResult = LocalAuthenticationResult(cacheRecord, cacheRecords, SdkType.MSAL, false)
+        authResult.clientDataInfo = ClientDataInfo.fromPipeDelimited(clientDataRaw)
+
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromAuthenticationResult(authResult, "16.0")
+
+        val acquireTokenResult = resultAdapter.getAcquireTokenResultFromResultBundle(resultBundle)
+        assertNotNull("ClientDataInfo should be present on AcquireTokenResult", acquireTokenResult.clientDataInfo)
+        assertEquals("AADSTS50058", acquireTokenResult.clientDataInfo!!.error)
+        assertEquals(clientDataRaw, acquireTokenResult.clientDataInfo!!.raw)
+    }
+
+    @Test
+    fun testAcquireTokenResult_PrefersActiveBrokerPackageName() {
+        val activeBrokerPackageName = "com.microsoft.activebroker"
+        val cacheRecord = newCacheRecord()
+        val cacheRecords: MutableList<ICacheRecord> = arrayListOf(cacheRecord)
+        val authResult = LocalAuthenticationResult(
+            cacheRecord,
+            cacheRecords,
+            SdkType.MSAL,
+            false
+        )
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromAuthenticationResult(
+            authResult,
+            "16.0"
+        ).apply {
+            putString(AuthenticationConstants.Broker.BROKER_PACKAGE_NAME, "com.microsoft.legacybroker")
+            putString(ACTIVE_BROKER_PACKAGE_NAME_KEY, activeBrokerPackageName)
+        }
+
+        val acquireTokenResult = resultAdapter.getAcquireTokenResultFromResultBundle(resultBundle)
+
+        assertEquals(activeBrokerPackageName, acquireTokenResult.brokerAppPackageName)
+    }
+
+    @Test
+    fun testPowerOptimizationSettings_RoundTripsOnSuccess() {
+        val cacheRecord = newCacheRecord()
+        val cacheRecords: MutableList<ICacheRecord> = arrayListOf(cacheRecord)
+        val authResult = LocalAuthenticationResult(
+            cacheRecord,
+            cacheRecords,
+            SdkType.MSAL,
+            false
+        )
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromAuthenticationResult(
+            authResult,
+            null,
+            "16.0",
+            "NOT_EXEMPT"
+        )
+
+        val acquireTokenResult =
+            resultAdapter.getAcquireTokenResultFromResultBundle(resultBundle)
+
+        assertEquals("NOT_EXEMPT", acquireTokenResult.powerOptimizationSettings)
+    }
+
+    @Test
+    fun testPowerOptimizationSettings_RoundTripsOnFailure() {
+        val sourceException = ClientException("test_error", "Test error").apply {
+            powerOptimizationSettings = "UNKNOWN"
+        }
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromBaseException(sourceException, "16.0")
+
+        val receivedException = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+
+        assertEquals("UNKNOWN", receivedException.powerOptimizationSettings)
+    }
+
+    @Test
+    fun testPowerOptimizationSettings_OmittedForLegacyResult() {
+        val cacheRecord = newCacheRecord()
+        val cacheRecords: MutableList<ICacheRecord> = arrayListOf(cacheRecord)
+        val authResult = LocalAuthenticationResult(
+            cacheRecord,
+            cacheRecords,
+            SdkType.MSAL,
+            false
+        )
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromAuthenticationResult(authResult, "16.0")
+
+        val acquireTokenResult =
+            resultAdapter.getAcquireTokenResultFromResultBundle(resultBundle)
+
+        assertNull(acquireTokenResult.powerOptimizationSettings)
+    }
+
+    @Test
+    fun testOnboardingBlob_RoundTripsThroughBundle() {
+        val blobJson = """{"schema_version":"1.0.0","session_correlation_id":"abc-123","onboarding_mode":"brokered","blocking_errors":["BROKER_INSTALLATION_TRIGGERED"]}"""
+        val brokerResult = BrokerResult.Builder()
+            .clientId("aClientId")
+            .correlationId("987d8962-3f4d-4054-a852-ac0c4b6a602e")
+            .onboardingBlob(blobJson)
+            .build()
+
+        val adapter = getInstance()
+        val resultBundle = adapter.bundleFromBrokerResult(brokerResult, "10.0")
+        val deserialized = adapter.brokerResultFromBundle(resultBundle)
+
+        assertEquals(blobJson, deserialized.onboardingBlob)
+    }
+
+    @Test
+    fun testOnboardingBlob_NotSet_DeserializesAsNull() {
+        val brokerResult = BrokerResult.Builder()
+            .clientId("aClientId")
+            .correlationId("987d8962-3f4d-4054-a852-ac0c4b6a602e")
+            .build()
+
+        val adapter = getInstance()
+        val resultBundle = adapter.bundleFromBrokerResult(brokerResult, "10.0")
+        val deserialized = adapter.brokerResultFromBundle(resultBundle)
+
+        assertNull(deserialized.onboardingBlob)
+    }
+
+    @Test
+    fun testOnboardingBlob_RoundTripsThroughBaseExceptionBundle() {
+        val blobJson = """{"schema_version":"1.0.0","session_correlation_id":"abc-123","onboarding_mode":"brokered","blocking_errors":["BROKER_INSTALLATION_TRIGGERED"]}"""
+        val exception = ClientException("invalid_grant", "token failure")
+        exception.onboardingBlob = blobJson
+
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromBaseException(exception, null)
+        val brokerResult = resultAdapter.brokerResultFromBundle(resultBundle)
+        assertEquals(blobJson, brokerResult.onboardingBlob)
+
+        val received = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+        assertEquals(
+            "Onboarding blob should be reconstructed on the exception",
+            blobJson,
+            received.onboardingBlob
+        )
+    }
+
+    @Test
+    fun testOnboardingBlob_NullOnException_NotInBundle() {
+        val exception = ClientException("invalid_grant", "token failure")
+        // No onboarding blob set
+
+        val resultAdapter = MsalBrokerResultAdapter()
+        val resultBundle = resultAdapter.bundleFromBaseException(exception, null)
+        val received = resultAdapter.getBaseExceptionFromBundle(resultBundle)
+        assertNull(received.onboardingBlob)
+    }
+
+    @Test
+    fun testOnboardingBlob_RoundTripsThroughAuthenticationResultBundle() {
+        val blobJson = """{"schema_version":"1.0.0","session_correlation_id":"abc-123","onboarding_mode":"brokered","steps_list":[{"step_id":"TokenIssued","ts":"2026-05-18T00:00:00.000Z"}]}"""
+        val cacheRecord = newCacheRecord()
+        val cacheRecords: MutableList<ICacheRecord> = arrayListOf(cacheRecord)
+        val authResult = LocalAuthenticationResult(cacheRecord, cacheRecords, SdkType.MSAL, false)
+
+        val adapter = getInstance()
+        val resultBundle = adapter.bundleFromAuthenticationResult(authResult, blobJson, "16.0")
+        val deserialized = adapter.brokerResultFromBundle(resultBundle)
+
+        assertEquals(blobJson, deserialized.onboardingBlob)
+    }
+
+    @Test
+    fun testOnboardingBlob_NullOnAuthenticationResult_NotInBundle() {
+        val cacheRecord = newCacheRecord()
+        val cacheRecords: MutableList<ICacheRecord> = arrayListOf(cacheRecord)
+        val authResult = LocalAuthenticationResult(cacheRecord, cacheRecords, SdkType.MSAL, false)
+
+        val adapter = getInstance()
+        val resultBundle = adapter.bundleFromAuthenticationResult(authResult, null, "16.0")
+        val deserialized = adapter.brokerResultFromBundle(resultBundle)
+
+        assertNull(deserialized.onboardingBlob)
+    }
+
 }

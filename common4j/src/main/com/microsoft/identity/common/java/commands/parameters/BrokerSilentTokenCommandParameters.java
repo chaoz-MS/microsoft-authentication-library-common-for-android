@@ -26,7 +26,11 @@ import com.google.gson.annotations.Expose;
 import com.microsoft.identity.common.java.broker.IBrokerAccount;
 import com.microsoft.identity.common.java.cache.BrokerOAuth2TokenCache;
 import com.microsoft.identity.common.java.exception.ArgumentException;
+import com.microsoft.identity.common.java.exception.ClientException;
+import com.microsoft.identity.common.java.flighting.CommonFlight;
+import com.microsoft.identity.common.java.flighting.CommonFlightsManager;
 import com.microsoft.identity.common.java.request.BrokerRequestType;
+import com.microsoft.identity.common.java.util.IPlatformUtil;
 import com.microsoft.identity.common.java.util.StringUtil;
 
 import lombok.EqualsAndHashCode;
@@ -63,17 +67,22 @@ public class BrokerSilentTokenCommandParameters extends SilentTokenCommandParame
     @Expose
     private final BrokerRequestType requestType;
 
+    // Optional field to persist nonce for WebApps token requests.
+    private final String webAppsNonce;
+
     @Expose
     private final String homeTenantId;
 
     /**
-     * Flag to indicate whether the silent token request is for a resource account.
+     * Indicates whether the request is for a resource account or not. Resource account ATS
+     * flow overrides it.
      */
-    @Expose
-    private final boolean isRequestForResourceAccount;
+    public boolean isRequestForResourceAccount() {
+        return false;
+    }
 
     @Override
-    public void validate() throws ArgumentException {
+    public void validate() throws ArgumentException, ClientException {
         if (callerUid == 0) {
             throw new ArgumentException(
                     ArgumentException.ACQUIRE_TOKEN_SILENT_OPERATION_NAME,
@@ -98,15 +107,6 @@ public class BrokerSilentTokenCommandParameters extends SilentTokenCommandParame
                     "mClientId", "Client Id is not set"
             );
         }
-
-        if (!getPlatformComponents().getPlatformUtil().isValidCallingApp(getRedirectUri(), getCallerPackageName())) {
-            throw new ArgumentException(
-                    ArgumentException.ACQUIRE_TOKEN_SILENT_OPERATION_NAME,
-                    "mRedirectUri", "The redirect URI doesn't match the uri" +
-                    " generated with caller package name and signature"
-            );
-        }
-
         if (!(getOAuth2TokenCache() instanceof BrokerOAuth2TokenCache)) {
             throw new ArgumentException(
                     ArgumentException.ACQUIRE_TOKEN_SILENT_OPERATION_NAME,
@@ -120,6 +120,39 @@ public class BrokerSilentTokenCommandParameters extends SilentTokenCommandParame
                     "mCallerPackageName", "Broker Account is null"
             );
         }
-
+        final IPlatformUtil platformUtil = getPlatformComponents().getPlatformUtil();
+        if (!CommonFlightsManager.INSTANCE.getFlightsProvider().isFlightEnabled(CommonFlight.DISABLE_WEB_APPS_API)
+                && getRequestType() == BrokerRequestType.WEB_APPS) {
+            // For web apps, the redirect URI will be in the web format instead of our standard Android one.
+            // So comparing the thumbprint of the package with the redirect URI won't work.
+            // Instead, we will check the package thumbprint against our static allowed list of apps for this feature.
+            platformUtil.isValidCallingAppForWebApps(getCallerUid());
+            return;
+        }
+        // SECURITY (AB#3687466): reject any silent request whose self-reported caller package (from the
+        // untrusted request bundle) is not owned by the kernel-attested calling uid, before the redirect-URI
+        // check runs against the verified caller. getCallerUid() is the Binder-attested uid: every silent
+        // entry point overwrites CALLER_INFO_UID with Binder.getCallingUid() before the parameters are
+        // built. When the VALIDATE_SILENT_CALLER flight is enabled (ECS-backed, secure-by-default
+        // kill-switch), we use the caller-validating isValidCallingApp overload, which enforces uid->package
+        // ownership first (throwing unknown_caller / ClientException) and then applies the redirect-URI
+        // check. With the flight off we fall back to the redirect-only two-argument overload (pre-fix
+        // behavior). The uid->package resolution lives behind IPlatformUtil (mirroring
+        // isValidCallingAppForWebApps).
+        final boolean isCallerValid;
+        if (CommonFlightsManager.INSTANCE.getFlightsProvider()
+                .isFlightEnabled(CommonFlight.VALIDATE_SILENT_CALLER)) {
+            isCallerValid = platformUtil.isValidCallingApp(
+                    getRedirectUri(), getCallerPackageName(), getCallerUid());
+        } else {
+            isCallerValid = platformUtil.isValidCallingApp(getRedirectUri(), getCallerPackageName());
+        }
+        if (!isCallerValid) {
+            throw new ArgumentException(
+                    ArgumentException.ACQUIRE_TOKEN_SILENT_OPERATION_NAME,
+                    "mRedirectUri", "The redirect URI doesn't match the uri" +
+                    " generated with caller package name and signature"
+            );
+        }
     }
 }

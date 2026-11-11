@@ -159,11 +159,30 @@ public final class PublicApiId {
     public static final String NATIVE_AUTH_SIGN_UP_SUBMIT_CODE = "235";
     public static final String NATIVE_AUTH_ACCOUNT_SIGN_OUT = "240";
     public static final String NATIVE_AUTH_ACCOUNT_GET_ACCESS_TOKEN = "250";
-    public static final String NATIVE_AUTH_MFA_DEFAULT_CHALLENGE = "251";
-    public static final String NATIVE_AUTH_GET_AUTH_METHODS = "252";
     public static final String NATIVE_AUTH_MFA_SELECTED_CHALLENGE = "253";
     public static final String NATIVE_AUTH_MFA_SUBMIT_CHALLENGE = "254";
     public static final String NATIVE_AUTH_JIT_CHALLENGE_AUTH_METHOD = "255";
     public static final String NATIVE_AUTH_JIT_SUBMIT_CHALLENGE = "256";
+
+    // NativeAuth V2 SSPR APIs (260-264)
+    //==============================================================================================
+    public static final String NATIVE_AUTH_V2_RESET_PASSWORD_START = "260";
+    public static final String NATIVE_AUTH_V2_RESET_PASSWORD_SUBMIT_CODE = "261";
+    public static final String NATIVE_AUTH_V2_RESET_PASSWORD_RESEND_CODE = "262";
+    public static final String NATIVE_AUTH_V2_RESET_PASSWORD_SUBMIT_NEW_PASSWORD = "263";
+    public static final String NATIVE_AUTH_V2_SIGN_IN_AFTER_RESET_PASSWORD = "264";
+    public static final String NATIVE_AUTH_V2_SIGN_IN_START = "265";
+    public static final String NATIVE_AUTH_V2_SIGN_IN_SUBMIT_PASSWORD = "266";
+    public static final String NATIVE_AUTH_V2_SIGN_IN_SELECT_MFA_METHOD = "267";
+    public static final String NATIVE_AUTH_V2_SIGN_IN_SUBMIT_MFA_CHALLENGE = "268";
+    public static final String NATIVE_AUTH_V2_SIGN_IN_RESEND_MFA_CHALLENGE = "269";
+    //endregion
+
+    // region WebApps APIs
+
+    // WebAppsGetTokenSubOperation
+    //==============================================================================================
+    public static final String WEBAPPS_GET_TOKEN_SILENT = "311";
+
     //endregion
 }

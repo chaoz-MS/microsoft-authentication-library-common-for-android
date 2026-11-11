@@ -59,6 +59,20 @@ public interface ILabAccount {
     String getHomeTenantId();
 
     /**
+     * Get the guest tenant id of this account.
+     *
+     * @return a String representing the account's guest tenant id
+     */
+    String getGuestTenantId();
+
+    /**
+     * Get the object id in home tenant.
+     *
+     * @return a String representing the account's object id in home tenant
+     */
+    String getHomeObjectId();
+
+    /**
      * A client id that can be used alongside this account to get a token.
      *
      * @return a String representing a client id
@@ -67,10 +81,18 @@ public interface ILabAccount {
 
     /**
      * Get authority (cloud URL) that can be used for this lab account.
+     * Deprecated: Use {@link #getCloudUrl()} instead.
+     * @return a String representing the authority host for this lab account
+     */
+    @Deprecated
+    String getAuthority();
+
+    /**
+     * Get cloud URL that can be used for this lab account.
      *
      * @return a String representing the authority host for this lab account
      */
-    String getAuthority();
+    String getCloudUrl();
 
     /**
      * Get Azure Environment associated to this lab account.

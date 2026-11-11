@@ -26,6 +26,7 @@ import static com.microsoft.identity.common.adal.internal.AuthenticationConstant
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_REQUEST_V2_COMPRESSED;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.REQUEST_AUTHORITY;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -51,12 +52,15 @@ import com.microsoft.identity.common.java.interfaces.IPlatformComponents;
 import com.microsoft.identity.common.java.providers.oauth2.OpenIdConnectPromptParameter;
 import com.microsoft.identity.common.java.request.SdkType;
 import com.microsoft.identity.common.java.ui.BrowserDescriptor;
+import com.microsoft.identity.common.java.util.RequestHeaderSerializationUtil;
 import com.microsoft.identity.common.java.util.StringUtil;
+import com.microsoft.identity.labapi.utilities.constants.LabConstants;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -107,7 +111,6 @@ public class MsalBrokerRequestAdapterTests {
         final String negotiatedBrokerProtocolVersion = "1.0";
         final Set<String> scopes = new HashSet<>();
         scopes.add("user.read");
-        final String CLIENT_ID = "4b0db8c2-9f26-4417-8bde-3f0e3656f8e0";
         final String REDIRECT_URI = "msauth://com.microsoft.identity.client.sample.local/1wIqXSqBj7w%2Bh11ZifsnqwgyKrY%3D";
         final String CALLER_PACKAGE_NAME = ApplicationProvider.getApplicationContext().getPackageName();
         final String VERSION = "5.4.0";
@@ -117,7 +120,7 @@ public class MsalBrokerRequestAdapterTests {
         final InteractiveTokenCommandParameters params = InteractiveTokenCommandParameters.builder()
                 .platformComponents(components)
                 .correlationId(CORRELATION_ID)
-                .clientId(CLIENT_ID)
+                .clientId(LabConstants.DEFAULT_ID4SLAB2_CLIENT_ID)
                 .applicationName(CALLER_PACKAGE_NAME)
                 .applicationVersion(VERSION)
                 .redirectUri(REDIRECT_URI)
@@ -142,7 +145,6 @@ public class MsalBrokerRequestAdapterTests {
         final String negotiatedBrokerProtocolVersion = "1.0";
         final Set<String> scopes = new HashSet<>();
         scopes.add("user.read");
-        final String CLIENT_ID = "4b0db8c2-9f26-4417-8bde-3f0e3656f8e0";
         final String REDIRECT_URI = "msauth://com.microsoft.identity.client.sample.local/1wIqXSqBj7w%2Bh11ZifsnqwgyKrY%3D";
         final String CALLER_PACKAGE_NAME = ApplicationProvider.getApplicationContext().getPackageName();
         final String VERSION = "5.4.0";
@@ -153,7 +155,7 @@ public class MsalBrokerRequestAdapterTests {
         final InteractiveTokenCommandParameters params = InteractiveTokenCommandParameters.builder()
                 .platformComponents(components)
                 .correlationId(CORRELATION_ID)
-                .clientId(CLIENT_ID)
+                .clientId(LabConstants.DEFAULT_ID4SLAB2_CLIENT_ID)
                 .applicationName(CALLER_PACKAGE_NAME)
                 .applicationVersion(VERSION)
                 .redirectUri(REDIRECT_URI)
@@ -192,7 +194,7 @@ public class MsalBrokerRequestAdapterTests {
         final AndroidInteractiveTokenCommandParameters params = AndroidInteractiveTokenCommandParameters.builder()
                 .platformComponents(components)
                 .correlationId("987d8962-3f4d-4054-a852-ac0c4b6a602e")
-                .clientId("4b0db8c2-9f26-4417-8bde-3f0e3656f8e0")
+                .clientId(LabConstants.DEFAULT_ID4SLAB2_CLIENT_ID)
                 .redirectUri("msauth://com.microsoft.identity.client.sample.local/1wIqXSqBj7w%2Bh11ZifsnqwgyKrY%3D")
                 .applicationName("com.microsoft.identity.client.sample.local")
                 .applicationVersion("1.0.0")
@@ -288,10 +290,13 @@ public class MsalBrokerRequestAdapterTests {
 
         final IPlatformComponents components = MockPlatformComponentsFactory.getNonFunctionalBuilder().build();
 
+        final HashMap<String, String> requestHeaders = new HashMap<>();
+        requestHeaders.put("header1", "value1");
+
         final InteractiveTokenCommandParameters params = InteractiveTokenCommandParameters.builder()
                 .platformComponents(components)
                 .correlationId("987d8962-3f4d-4054-a852-ac0c4b6a602e")
-                .clientId("4b0db8c2-9f26-4417-8bde-3f0e3656f8e0")
+                .clientId(LabConstants.DEFAULT_ID4SLAB2_CLIENT_ID)
                 .redirectUri("msauth://com.microsoft.identity.client.sample.local/1wIqXSqBj7w%2Bh11ZifsnqwgyKrY%3D")
                 .applicationName("com.microsoft.identity.client.sample.local")
                 .applicationVersion("1.0.0")
@@ -309,6 +314,7 @@ public class MsalBrokerRequestAdapterTests {
                 .preferredBrowser(new BrowserDescriptor("chrome", "signature", null, null))
                 .claimsRequestJson("claims_request")
                 .brokerBrowserSupportEnabled(true)
+                .requestHeaders(requestHeaders)
                 .build();
         final MsalBrokerRequestAdapter msalBrokerRequestAdapter = new MsalBrokerRequestAdapter();
         final BrokerRequest brokerRequest = msalBrokerRequestAdapter.brokerRequestFromAcquireTokenParameters(params);
@@ -327,6 +333,8 @@ public class MsalBrokerRequestAdapterTests {
         assertEquals(params.getAuthenticationScheme(), brokerRequest.getAuthenticationScheme());
         assertEquals(params.getPrompt().name(), brokerRequest.getPrompt());
         assertEquals(params.isSuppressBrokerAccountPicker(), brokerRequest.isSuppressAccountPicker());
+        assertNotNull(brokerRequest.getRequestHeaders());
+        assertEquals(params.getRequestHeaders(), RequestHeaderSerializationUtil.fromJson(brokerRequest.getRequestHeaders()));
         assertNull(brokerRequest.getSignInWithGoogleCredential());
     }
 
@@ -376,5 +384,74 @@ public class MsalBrokerRequestAdapterTests {
         assertEquals(mockClientId, brokerRequest.getClientId());
         assertEquals(mockRedirectUri, brokerRequest.getRedirect());
         assertEquals(mockTenantId, brokerRequest.getTenantId());
+    }
+
+    /**
+     * Verify that {@code onboardingSeedJson} from {@link InteractiveTokenCommandParameters}
+     * is propagated into {@link BrokerRequest} by
+     * {@link MsalBrokerRequestAdapter#brokerRequestFromAcquireTokenParameters(InteractiveTokenCommandParameters)}.
+     */
+    @Test
+    public void test_brokerRequestFromAcquireTokenParameters_PropagatesOnboardingSeedJson() {
+        final String seedJson = "{\"schema_version\":\"1.0.0\","
+                + "\"session_correlation_id\":\"abc-123\","
+                + "\"onboarding_mode\":\"brokered\"}";
+        final Set<String> scopes = new HashSet<>();
+        scopes.add("user.read");
+
+        final IPlatformComponents components = MockPlatformComponentsFactory.getNonFunctionalBuilder().build();
+        final AndroidInteractiveTokenCommandParameters params = AndroidInteractiveTokenCommandParameters.builder()
+                .platformComponents(components)
+                .correlationId("987d8962-3f4d-4054-a852-ac0c4b6a602e")
+                .clientId("aClientId")
+                .redirectUri("msauth://com.example/foo")
+                .applicationName("com.example")
+                .applicationVersion("1.0.0")
+                .sdkType(SdkType.MSAL)
+                .sdkVersion("5.4.0")
+                .authority(new AzureActiveDirectoryAuthority())
+                .scopes(scopes)
+                .authenticationScheme(new BearerAuthenticationSchemeInternal())
+                .prompt(OpenIdConnectPromptParameter.LOGIN)
+                .requiredBrokerProtocolVersion("10.0")
+                .onboardingSeedJson(seedJson)
+                .build();
+
+        final BrokerRequest brokerRequest =
+                new MsalBrokerRequestAdapter().brokerRequestFromAcquireTokenParameters(params);
+
+        assertEquals(seedJson, brokerRequest.getOnboardingSeedJson());
+    }
+
+    /**
+     * Verify that when {@code onboardingSeedJson} is not set on the parameters,
+     * the resulting {@link BrokerRequest} carries a null seed (i.e. no accidental default value).
+     */
+    @Test
+    public void test_brokerRequestFromAcquireTokenParameters_NoSeedJson_IsNull() {
+        final Set<String> scopes = new HashSet<>();
+        scopes.add("user.read");
+
+        final IPlatformComponents components = MockPlatformComponentsFactory.getNonFunctionalBuilder().build();
+        final AndroidInteractiveTokenCommandParameters params = AndroidInteractiveTokenCommandParameters.builder()
+                .platformComponents(components)
+                .correlationId("987d8962-3f4d-4054-a852-ac0c4b6a602e")
+                .clientId("aClientId")
+                .redirectUri("msauth://com.example/foo")
+                .applicationName("com.example")
+                .applicationVersion("1.0.0")
+                .sdkType(SdkType.MSAL)
+                .sdkVersion("5.4.0")
+                .authority(new AzureActiveDirectoryAuthority())
+                .scopes(scopes)
+                .authenticationScheme(new BearerAuthenticationSchemeInternal())
+                .prompt(OpenIdConnectPromptParameter.LOGIN)
+                .requiredBrokerProtocolVersion("10.0")
+                .build();
+
+        final BrokerRequest brokerRequest =
+                new MsalBrokerRequestAdapter().brokerRequestFromAcquireTokenParameters(params);
+
+        assertNull(brokerRequest.getOnboardingSeedJson());
     }
 }

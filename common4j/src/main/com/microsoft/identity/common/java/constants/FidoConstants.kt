@@ -68,9 +68,26 @@ class FidoConstants {
         const val PASSKEY_PROTOCOL_HEADER_NAME = "x-ms-PassKeyAuth"
 
         /**
-         * Version of the passkey protocol that we want to use.
+         * version number of the passkey protocol for authentication only.
          */
-        const val PASSKEY_PROTOCOL_VERSION = "1.0"
+        const val PASSKEY_PROTOCOL_VERSION_1_0 = "1.0"
+
+        /**
+         * Version number of the passkey protocol for authentication and registration.
+         */
+        const val PASSKEY_PROTOCOL_VERSION_1_1 = "1.1"
+
+        /**
+         * Set of supported passkey protocol versions.
+         *
+         * This defines the protocol versions that are recognized and compatible
+         * with the current implementation.
+         */
+        val supportedPasskeyProtocolVersions = setOf(
+            PASSKEY_PROTOCOL_VERSION_1_0,
+            PASSKEY_PROTOCOL_VERSION_1_1
+        )
+
 
         /**
          * Constant to put in PASSKEY_PROTOCOL_KEY_TYPES_SUPPORTED if we support passkeys.
@@ -101,9 +118,14 @@ class FidoConstants {
         const val PASSKEY_PROTOCOL_KEY_TYPES_SUPPORTED = PASSKEY_PROTOCOL_KEY_TYPES_PASSKEY_OPTION
 
         /**
-         * Corresponding value to the passkey protocol header.
+         * Corresponding value to the passkey protocol header for authentication only.
          */
-        const val PASSKEY_PROTOCOL_HEADER_VALUE = "$PASSKEY_PROTOCOL_VERSION/$PASSKEY_PROTOCOL_KEY_TYPES_SUPPORTED"
+        const val PASSKEY_PROTOCOL_HEADER_AUTH_ONLY = "$PASSKEY_PROTOCOL_VERSION_1_0/$PASSKEY_PROTOCOL_KEY_TYPES_SUPPORTED"
+
+        /**
+         * Corresponding value to the passkey protocol header for authentication and registration.
+         */
+        const val PASSKEY_PROTOCOL_HEADER_AUTH_AND_REG = "$PASSKEY_PROTOCOL_VERSION_1_1/$PASSKEY_PROTOCOL_KEY_TYPES_SUPPORTED"
 
         /**
          * Error messages sent to ESTS via the protocol should have a prefix attached.
@@ -139,5 +161,38 @@ class FidoConstants {
          * JSON key value of id in response of Webauthn JSON object.
          */
         const val WEBAUTHN_RESPONSE_ID_JSON_KEY = "id"
+
+        /**
+         * JSON key value of attestationObject in WebAuthn registration response JSON object.
+         */
+        const val WEBAUTHN_REGISTRATION_ATTESTATION_OBJECT_JSON_KEY = "attestationObject"
+
+        /**
+         * JSON key value of origin in WebAuthn registration response JSON object.
+         */
+        const val WEBAUTHN_REGISTRATION_ORIGIN_JSON_KEY = "origin"
+
+        /**
+         * Byte offset of the flags byte within authenticator data (`authData`) as defined by WebAuthn.
+         */
+        const val WEBAUTHN_AUTHDATA_FLAGS_OFFSET = 32
+
+        /**
+         * Bit mask for the attested credential data flag (AT) in the authenticator data flags byte.
+         */
+        const val WEBAUTHN_AUTHDATA_ATTESTED_CREDENTIAL_DATA_FLAG = 0x40
+
+        /**
+         * Byte offset of the AAGUID within the authenticator data (authData) of a WebAuthn
+         * attestation object, as defined by the WebAuthn spec
+         * (https://www.w3.org/TR/webauthn-2/#sctn-authenticator-data).
+         */
+        const val WEBAUTHN_AUTHDATA_AAGUID_OFFSET = 37
+
+        /**
+         * Length in bytes of the AAGUID field within the authenticator data (authData),
+         * as defined by the WebAuthn spec.
+         */
+        const val WEBAUTHN_AUTHDATA_AAGUID_LENGTH = 16
     }
 }

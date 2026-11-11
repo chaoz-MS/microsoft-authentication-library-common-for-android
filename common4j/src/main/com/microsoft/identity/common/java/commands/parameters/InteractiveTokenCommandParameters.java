@@ -38,6 +38,8 @@ import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.experimental.SuperBuilder;
 
+import edu.umd.cs.findbugs.annotations.Nullable;
+
 @Getter
 @EqualsAndHashCode(callSuper = true)
 @SuperBuilder(toBuilder = true)
@@ -70,6 +72,8 @@ public class InteractiveTokenCommandParameters extends TokenCommandParameters {
 
     private final List<Map.Entry<String, String>> extraQueryStringParameters;
 
+    private final List<Map.Entry<String, String>> extraQueryStringParametersForWebApps;
+
     @Expose()
     private final List<String> extraScopesToConsent;
 
@@ -83,12 +87,23 @@ public class InteractiveTokenCommandParameters extends TokenCommandParameters {
      */
     private final boolean suppressBrokerAccountPicker;
 
+    /**
+     * Onboarding telemetry seed JSON blob.
+     * Passed through IPC to the broker for step recording and blocking error tracking.
+     */
+    @Nullable
+    private final String onboardingSeedJson;
+
     public boolean getHandleNullTaskAffinity(){
         return handleNullTaskAffinity;
     }
 
     public List<Map.Entry<String, String>> getExtraQueryStringParameters() {
         return this.extraQueryStringParameters == null ? null : new ArrayList<>(this.extraQueryStringParameters);
+    }
+
+    public List<Map.Entry<String, String>> getExtraQueryStringParametersForWebApps() {
+        return this.extraQueryStringParametersForWebApps == null ? null : new ArrayList<>(this.extraQueryStringParametersForWebApps);
     }
 
     public List<String> getExtraScopesToConsent() {

@@ -23,6 +23,7 @@
 package com.microsoft.identity.common.internal.util;
 
 import android.os.Build;
+import android.security.keystore.KeyInfo;
 
 import com.microsoft.identity.common.java.exception.ClientException;
 import com.microsoft.identity.common.java.logging.Logger;
@@ -35,6 +36,7 @@ import java.io.IOException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.Key;
+import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
@@ -46,6 +48,8 @@ import java.security.UnrecoverableKeyException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.spec.AlgorithmParameterSpec;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 import javax.crypto.Cipher;
@@ -239,7 +243,6 @@ public class AndroidKeyStoreUtil {
                 Logger.verbose(methodTag, "Public key entry doesn't exist.");
                 return null;
             }
-
             return new KeyPair(cert.getPublicKey(), (PrivateKey) privateKey);
         } catch (final RuntimeException e) {
             // There is an issue in android keystore that resets keystore
@@ -288,8 +291,11 @@ public class AndroidKeyStoreUtil {
 
     /**
      * See: https://issuetracker.google.com/issues/37095309
+     * <p>
+     * Must not be {@code synchronized}: callers already hold LOCALE_CHANGE_LOCK, so the class
+     * monitor adds nothing, but taking it here closed an ABBA cycle with generateKeyPair.
      */
-    public static synchronized void applyKeyStoreLocaleWorkarounds(@NonNull final Locale currentLocale) {
+    public static void applyKeyStoreLocaleWorkarounds(@NonNull final Locale currentLocale) {
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M
                 && DateUtilities.isLocaleCalendarNonGregorian(currentLocale)) {
             Locale.setDefault(Locale.ENGLISH);
@@ -355,7 +361,8 @@ public class AndroidKeyStoreUtil {
      */
     public static synchronized byte[] wrap(@NonNull final SecretKey key,
                               @NonNull final KeyPair keyToWrap,
-                              @NonNull final String wrapAlgorithm)
+                              @NonNull final String wrapAlgorithm,
+                              @Nullable final AlgorithmParameterSpec algorithmParameterSpec)
             throws ClientException {
         final String methodTag = TAG + ":wrap";
 
@@ -364,7 +371,11 @@ public class AndroidKeyStoreUtil {
         try {
             Logger.verbose(methodTag, "Wrap secret key with a KeyPair.");
             final Cipher wrapCipher = Cipher.getInstance(wrapAlgorithm); // CodeQL [SM05136] Used on AndroidWrappedKeyLoader, will be removed once the new KeyProvider is fully implemented.
-            wrapCipher.init(Cipher.WRAP_MODE, keyToWrap.getPublic());
+            if (algorithmParameterSpec != null) {
+                wrapCipher.init(Cipher.WRAP_MODE, keyToWrap.getPublic(), algorithmParameterSpec);
+            } else {
+                wrapCipher.init(Cipher.WRAP_MODE, keyToWrap.getPublic());
+            }
             return wrapCipher.wrap(key);
         } catch (final NoSuchPaddingException e) {
             errCode = NO_SUCH_PADDING;
@@ -408,17 +419,22 @@ public class AndroidKeyStoreUtil {
      * @param wrapAlgorithm        the algorithm used to wrap the key.
      * @return the unwrapped key.
      */
-    public static synchronized SecretKey unwrap(@NonNull final byte[] wrappedKeyBlob,
-                                   @NonNull final String wrappedKeyAlgorithm,
-                                   @NonNull final KeyPair keyPairForUnwrapping,
-                                   @NonNull final String wrapAlgorithm) throws ClientException {
+    public static synchronized SecretKey unwrap(final byte[] wrappedKeyBlob,
+                                                @NonNull final String wrappedKeyAlgorithm,
+                                                @NonNull final KeyPair keyPairForUnwrapping,
+                                                @NonNull final String wrapAlgorithm,
+                                                @Nullable final AlgorithmParameterSpec algorithmParameterSpec) throws ClientException {
         final String methodTag = TAG + ":unwrap";
         final Throwable exception;
         final String errCode;
         try {
             //TODO: Once the new KeyProvider is fully implemented, we can remove this suppression.
             final Cipher wrapCipher = Cipher.getInstance(wrapAlgorithm); // CodeQL [SM05136] Used on AndroidWrappedKeyLoader, will be removed once the new KeyProvider is fully implemented.
-            wrapCipher.init(Cipher.UNWRAP_MODE, keyPairForUnwrapping.getPrivate());
+            if (algorithmParameterSpec != null) {
+                wrapCipher.init(Cipher.UNWRAP_MODE, keyPairForUnwrapping.getPrivate(), algorithmParameterSpec);
+            } else {
+                wrapCipher.init(Cipher.UNWRAP_MODE, keyPairForUnwrapping.getPrivate());
+            }
             return (SecretKey) wrapCipher.unwrap(wrappedKeyBlob, wrappedKeyAlgorithm, Cipher.SECRET_KEY);
         } catch (final IllegalArgumentException e) {
             // There is issue with Android KeyStore when lock screen type is changed which could
@@ -528,6 +544,103 @@ public class AndroidKeyStoreUtil {
             return null;
         } else {
             return null;
+        }
+    }
+
+    /**
+     * Extracts the exact numeric error code from an {@link android.security.KeyStoreException} found in
+     * the causal chain of the given throwable, if present. This is the most precise error identifier
+     * available for KeyStore failures, distinguishing transient from permanent causes where the
+     * higher-level {@link ClientException} error code cannot.
+     *
+     * @param throwable the throwable to inspect.
+     * @return the numeric error code as a String, or {@code null} when no KeyStoreException is found or
+     *         the API level is below 33 (where the numeric code is unavailable).
+     */
+    public static @Nullable String getKeyStoreExceptionNumericErrorCode(@NonNull final Throwable throwable) {
+        // getNumericErrorCode() is only available on API 33+. Keep the SDK_INT check inline (rather than
+        // relying on findKeyStoreException's internal guard) so lint's NewApi flow analysis is satisfied.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            final android.security.KeyStoreException keyStoreException = findKeyStoreException(throwable);
+            if (keyStoreException != null) {
+                return String.valueOf(keyStoreException.getNumericErrorCode());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether a KeyStore failure is transient (worth retrying) or permanent. Lets callers distinguish
+     * recoverable failures from genuine data loss when a secret-key wipe is triggered.
+     */
+    public enum KeyStoreErrorTransience {
+        /** API 33+: KeyStoreException reported the failure as transient (a retry may succeed). */
+        TRANSIENT,
+        /** API 33+: KeyStoreException reported the failure as permanent (a retry will not help). */
+        NOT_TRANSIENT,
+        /** API < 33: transience cannot be determined (KeyStoreException.isTransientFailure() unavailable). */
+        API_TOO_OLD,
+        /** API 33+: no KeyStoreException in the cause chain, so the failure is not a KeyStore error. */
+        NOT_KEYSTORE_ERROR
+    }
+
+    /**
+     * Classifies whether the KeyStore failure in the given throwable's cause chain is transient or
+     * permanent, using {@link android.security.KeyStoreException#isTransientFailure()} (API 33+).
+     * This is more precise than the higher-level {@link ClientException} error code, which cannot
+     * distinguish a retryable failure from one that warrants discarding key material.
+     *
+     * @param throwable the throwable to inspect.
+     * @return one of {@link KeyStoreErrorTransience}; never {@code null}.
+     */
+    public static @NonNull KeyStoreErrorTransience getKeyStoreErrorTransience(@NonNull final Throwable throwable) {
+        // isTransientFailure()/KeyStoreException are only available on API 33+.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return KeyStoreErrorTransience.API_TOO_OLD;
+        }
+        final android.security.KeyStoreException keyStoreException = findKeyStoreException(throwable);
+        if (keyStoreException == null) {
+            return KeyStoreErrorTransience.NOT_KEYSTORE_ERROR;
+        }
+        return keyStoreException.isTransientFailure()
+                ? KeyStoreErrorTransience.TRANSIENT
+                : KeyStoreErrorTransience.NOT_TRANSIENT;
+    }
+
+    /**
+     * Returns encryption paddings supported by a KeyStore key pair.
+     * <p>
+     * Extracts supported padding schemes from the key's metadata on API 23+.
+     * Strips "Padding" suffix from padding names for consistent formatting.
+     *
+     * @param keyPair The key pair to query for supported encryption paddings
+     * @return List of supported padding names (e.g., "PKCS1", "OAEP"),
+     *         or empty list on API < 23 or if retrieval fails
+     */
+    public static synchronized List<String> getKeyPairEncryptionPaddings(@NonNull final KeyPair keyPair)
+        throws ClientException {
+        final String methodTag = TAG + ":getKeyPairEncryptionPaddings";
+        try {
+            final PrivateKey privateKey = keyPair.getPrivate();
+            final KeyFactory keyFactory = KeyFactory.getInstance(privateKey.getAlgorithm(), ANDROID_KEY_STORE_TYPE);
+            final KeyInfo keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo.class);
+            final List<String> encryptionPaddings = new ArrayList<>();
+            // keyInfo.getEncryptionPaddings() returns a list of encryption paddings supported by the key.
+            // We remove the "Padding" suffix from each padding name to match the expected format.
+            for (final String padding : keyInfo.getEncryptionPaddings()) {
+                encryptionPaddings.add(padding.replace("Padding", ""));
+            }
+            Logger.info(methodTag, "Supported encryption paddings: " + encryptionPaddings);
+            return encryptionPaddings;
+        } catch (final Exception e) {
+            // Do NOT swallow the failure. Propagate with the cause preserved so callers (and the wipe
+            // telemetry they feed) can see the real KeyStoreException in the cause chain.
+            Logger.warn(methodTag, "Failed to retrieve key padding information" + ": " + e.getMessage());
+            throw new ClientException(
+                    UNKNOWN_CRYPTO_ERROR,
+                    "Failed to retrieve key pair encryption paddings: " + e.getMessage(),
+                    e
+            );
         }
     }
 }

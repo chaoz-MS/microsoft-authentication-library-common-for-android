@@ -33,8 +33,11 @@ import com.microsoft.identity.labapi.utilities.rules.RetryTestRule;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
+
+import java.util.Map;
 
 /**
  * Test Various function calls through the lab api including
@@ -49,6 +52,9 @@ public class LabClientTest {
 
     @Rule
     public RetryTestRule retryRule = new RetryTestRule(3);
+
+    private final String DEFAULT_LAB_NAME = "id4slab2";
+    private final String GUEST_LAB_NAME = "id4slab1";
 
     @Before
     public void setup() {
@@ -65,19 +71,10 @@ public class LabClientTest {
     }
 
     @Test
-    public void canFetchCloudAccount() {
-        final LabQuery query = LabQuery.builder()
-                .userType(UserType.CLOUD)
-                .build();
-
+    public void canFetchBasicAccount() {
         try {
-            final ILabAccount labAccount = mLabClient.getLabAccount(query);
-            Assert.assertNotNull(labAccount);
-            Assert.assertNotNull(labAccount.getUsername());
-            Assert.assertNotNull(labAccount.getPassword());
-            Assert.assertNotNull(labAccount.getUserType());
-            Assert.assertTrue(labAccount.getUsername().toLowerCase().contains("msidlab4"));
-            Assert.assertEquals(UserType.CLOUD, labAccount.getUserType());
+            final ILabAccount labAccount = mLabClient.getAccountFromLabJsonStringInMobileBuildVault(UserType.BASIC);
+            assertLabAccount(labAccount, UserType.BASIC, DEFAULT_LAB_NAME);
         } catch (final LabApiException e) {
             throw new AssertionError(e);
         }
@@ -85,18 +82,9 @@ public class LabClientTest {
 
     @Test
     public void canFetchMSAAccount() {
-        final LabQuery query = LabQuery.builder()
-                .userType(UserType.MSA)
-                .build();
-
         try {
-            final ILabAccount labAccount = mLabClient.getLabAccount(query);
-            Assert.assertNotNull(labAccount);
-            Assert.assertNotNull(labAccount.getUsername());
-            Assert.assertNotNull(labAccount.getPassword());
-            Assert.assertNotNull(labAccount.getUserType());
-            Assert.assertTrue(labAccount.getUsername().toLowerCase().contains("outlook"));
-            Assert.assertEquals(UserType.MSA, labAccount.getUserType());
+            final ILabAccount labAccount = mLabClient.getAccountFromLabJsonStringInMobileBuildVault(UserType.MSA);
+            assertLabAccount(labAccount, UserType.MSA, "outlook");
         } catch (final LabApiException e) {
             throw new AssertionError(e);
         }
@@ -104,18 +92,9 @@ public class LabClientTest {
 
     @Test
     public void canFetchGuestAccount() {
-        final LabQuery query = LabQuery.builder()
-                .userType(UserType.GUEST)
-                .build();
-
         try {
-            final ILabAccount labAccount = mLabClient.getLabAccount(query);
-            Assert.assertNotNull(labAccount);
-            Assert.assertNotNull(labAccount.getUsername());
-            Assert.assertNotNull(labAccount.getPassword());
-            Assert.assertNotNull(labAccount.getUserType());
-            Assert.assertTrue(labAccount.getUsername().toLowerCase().contains("msidlab4"));
-            Assert.assertEquals(UserType.GUEST, labAccount.getUserType());
+            final ILabAccount labAccount = mLabClient.getAccountFromLabJsonStringInMobileBuildVault(UserType.GUEST);
+            assertLabAccount(labAccount, UserType.GUEST, GUEST_LAB_NAME);
         } catch (final LabApiException e) {
             throw new AssertionError(e);
         }
@@ -123,18 +102,31 @@ public class LabClientTest {
 
     @Test
     public void canFetchFederatedAccount() {
-        final LabQuery query = LabQuery.builder()
-                .userType(UserType.FEDERATED)
-                .build();
-
         try {
-            final ILabAccount labAccount = mLabClient.getLabAccount(query);
-            Assert.assertNotNull(labAccount);
-            Assert.assertNotNull(labAccount.getUsername());
-            Assert.assertNotNull(labAccount.getPassword());
-            Assert.assertNotNull(labAccount.getUserType());
-            Assert.assertTrue(labAccount.getUsername().toLowerCase().contains("msidlab4"));
-            Assert.assertEquals(UserType.FEDERATED, labAccount.getUserType());
+            final ILabAccount labAccount = mLabClient.getAccountFromLabJsonStringInMobileBuildVault(UserType.FEDERATED);
+            assertLabAccount(labAccount, UserType.FEDERATED, DEFAULT_LAB_NAME);
+        } catch (final LabApiException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    public void canFetchUsGovAccount() {
+        try {
+            final ILabAccount labAccount = mLabClient.getAccountFromLabJsonStringInMobileBuildVault(UserType.USGOV);
+            assertLabAccount(labAccount, UserType.USGOV, "arlmsidlab1");
+        } catch (final LabApiException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    // Ignored because the China tenant is being decommissioned.
+    @Ignore
+    public void canFetchChinaAccount() {
+        try {
+            final ILabAccount labAccount = mLabClient.getAccountFromLabJsonStringInMobileBuildVault(UserType.CHINA);
+            assertLabAccount(labAccount, UserType.CHINA, "mncmsidlab1");
         } catch (final LabApiException e) {
             throw new AssertionError(e);
         }
@@ -144,12 +136,7 @@ public class LabClientTest {
     public void canCreateBasicTempUser() {
         try {
             final ILabAccount labAccount = mLabClient.createTempAccount(TempUserType.BASIC);
-            Assert.assertNotNull(labAccount);
-            Assert.assertNotNull(labAccount.getUsername());
-            Assert.assertNotNull(labAccount.getPassword());
-            Assert.assertNotNull(labAccount.getUserType());
-            Assert.assertTrue(labAccount.getUsername().toLowerCase().contains("msidlab4"));
-            Assert.assertEquals(UserType.CLOUD, labAccount.getUserType());
+            assertLabAccount(labAccount, UserType.CLOUD, DEFAULT_LAB_NAME);
         } catch (final LabApiException e) {
             throw new AssertionError(e);
         }
@@ -159,11 +146,7 @@ public class LabClientTest {
     public void canCreateMAMCATempUser() {
         try {
             final ILabAccount labAccount = mLabClient.createTempAccount(TempUserType.MAM_CA);
-            Assert.assertNotNull(labAccount);
-            Assert.assertNotNull(labAccount.getUsername());
-            Assert.assertNotNull(labAccount.getPassword());
-            Assert.assertNotNull(labAccount.getUserType());
-            Assert.assertTrue(labAccount.getUsername().toLowerCase().contains("msidlab4"));
+            assertLabAccount(labAccount, UserType.CLOUD, DEFAULT_LAB_NAME);
         } catch (final LabApiException e) {
             throw new AssertionError(e);
         }
@@ -202,4 +185,48 @@ public class LabClientTest {
         }
     }
 
+    @Test
+    public void canFetchPasswordFromKeyVault() {
+        try {
+            final String password = mLabClient.getPasswordSecretFromLabsKeyVault("ID4SLAB2");
+            Assert.assertTrue(password != null && !password.isEmpty());
+        } catch (final LabApiException e){
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    public void canFetchAccountUpnJsonStringOtherAccounts() {
+        try {
+            final Map<String, LabJsonStringAccountEntry> accountUpnMap = mLabClient.getAccountMapJsonFromMobileBuildKeyVault();
+            Assert.assertTrue(accountUpnMap != null && !accountUpnMap.isEmpty());
+
+            final ILabAccount resourceAccount = mLabClient.getAccountFromLabJsonStringInMobileBuildVault(UserType.RESOURCE_ACCOUNT_1);
+            Assert.assertNotNull(resourceAccount);
+            Assert.assertNotNull(resourceAccount.getUsername());
+            Assert.assertNotNull(resourceAccount.getPassword());
+            Assert.assertNotNull(resourceAccount.getHomeObjectId());
+            Assert.assertNotNull(resourceAccount.getHomeTenantId());
+        } catch (final LabApiException e){
+            throw new AssertionError(e);
+        }
+    }
+
+    // Helper to assert common properties of a lab account
+    private void assertLabAccount(final ILabAccount labAccount,
+                                  final UserType expectedUserType,
+                                  final String expectedUsernameContains) {
+        Assert.assertNotNull(labAccount);
+        Assert.assertNotNull(labAccount.getUsername());
+        Assert.assertNotNull(labAccount.getPassword());
+        Assert.assertNotNull(labAccount.getUserType());
+        if (expectedUsernameContains != null) {
+            Assert.assertTrue(labAccount.getUsername().toLowerCase().contains(expectedUsernameContains));
+        }
+        if (expectedUserType != null) {
+            Assert.assertEquals(expectedUserType, labAccount.getUserType());
+        }
+        Assert.assertNotNull(labAccount.getHomeObjectId());
+        Assert.assertNotNull(labAccount.getHomeTenantId());
+    }
 }

@@ -22,18 +22,28 @@
 //  THE SOFTWARE.
 package com.microsoft.identity.common.internal.result;
 
+import static com.microsoft.identity.common.java.AuthenticationConstants.Broker.BROKER_REQUEST_RECEIVED_TIMESTAMP;
+import static com.microsoft.identity.common.java.AuthenticationConstants.Broker.BROKER_RESPONSE_GENERATION_TIMESTAMP;
+import static com.microsoft.identity.common.java.AuthenticationConstants.Broker.BROKER_SILENT_EXECUTOR_POOL_SIZE;
+import static com.microsoft.identity.common.java.AuthenticationConstants.Broker.BROKER_IPC_TELEMETRY;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_ACCOUNTS;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_ACCOUNTS_COMPRESSED;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_ACTIVITY_NAME;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_DEVICE_MODE;
+import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_GENERATE_ALL_SSO_TOKENS_RESULT;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_GENERATE_SHR_RESULT;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_GENERATE_SSO_TOKEN_RESULT;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_PACKAGE_NAME;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_RESULT_V2_COMPRESSED;
+import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_WEBAPPS_GET_CONTRACTS_RESULT;
+import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_WEB_APPS_ERROR_RESULT;
+import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_WEB_APPS_SUCCESSFUL_RESULT;
+import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.BROKER_WEB_APPS_SUCCESSFUL_RESULT_COMPRESSED;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.HELLO_ERROR_CODE;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.HELLO_ERROR_MESSAGE;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.NEGOTIATED_BP_VERSION_KEY;
 import static com.microsoft.identity.common.adal.internal.AuthenticationConstants.Broker.PREFERRED_AUTH_METHOD_CODE;
+import static com.microsoft.identity.common.internal.cache.ActiveBrokerCacheUpdater.ACTIVE_BROKER_PACKAGE_NAME_KEY;
 import static com.microsoft.identity.common.internal.util.GzipUtil.compressString;
 import static com.microsoft.identity.common.java.exception.ClientException.INVALID_BROKER_BUNDLE;
 import static com.microsoft.identity.common.java.util.BrokerProtocolVersionUtil.isFirstVersionOlderOrEqual;
@@ -47,16 +57,24 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.microsoft.identity.common.adal.internal.AuthenticationConstants;
 import com.microsoft.identity.common.adal.internal.util.HashMapExtensions;
 import com.microsoft.identity.common.adal.internal.util.JsonExtensions;
 import com.microsoft.identity.common.internal.broker.BrokerResult;
 import com.microsoft.identity.common.internal.request.AuthenticationSchemeTypeAdapter;
 import com.microsoft.identity.common.internal.util.GzipUtil;
+import com.microsoft.identity.common.internal.util.WebAppsUtil;
 import com.microsoft.identity.common.java.authorities.AzureActiveDirectoryAudience;
+import com.microsoft.identity.common.java.broker.BrokerPerformanceMetrics;
+import com.microsoft.identity.common.java.broker.telemetry.BrokerIpcTelemetry;
 import com.microsoft.identity.common.java.cache.CacheRecord;
 import com.microsoft.identity.common.java.cache.ICacheRecord;
+import com.microsoft.identity.common.java.controllers.CommandDispatcher;
+import com.microsoft.identity.common.java.commands.AcquirePrtSsoTokenBatchResult;
 import com.microsoft.identity.common.java.commands.AcquirePrtSsoTokenResult;
+import com.microsoft.identity.common.java.commands.webapps.WebAppsAccountItem;
+import com.microsoft.identity.common.java.commands.webapps.WebAppsGetTokenSubOperationResponse;
 import com.microsoft.identity.common.java.constants.OAuth2ErrorCode;
 import com.microsoft.identity.common.java.constants.OAuth2SubErrorCode;
 import com.microsoft.identity.common.java.dto.AadDeviceIdRecord;
@@ -84,10 +102,12 @@ import com.microsoft.identity.common.java.result.AcquireTokenResult;
 import com.microsoft.identity.common.java.result.GenerateShrResult;
 import com.microsoft.identity.common.java.result.ILocalAuthenticationResult;
 import com.microsoft.identity.common.java.result.LocalAuthenticationResult;
+import com.microsoft.identity.common.java.telemetry.ClientDataInfo;
 import com.microsoft.identity.common.java.ui.PreferredAuthMethod;
 import com.microsoft.identity.common.java.util.BrokerProtocolVersionUtil;
 import com.microsoft.identity.common.java.util.HeaderSerializationUtil;
 import com.microsoft.identity.common.java.util.ObjectMapper;
+import com.microsoft.identity.common.java.util.SchemaUtil;
 import com.microsoft.identity.common.java.util.StringUtil;
 import com.microsoft.identity.common.java.util.ThrowableUtil;
 import com.microsoft.identity.common.logging.Logger;
@@ -98,6 +118,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
@@ -111,8 +132,13 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
 
     private static final String TAG = MsalBrokerResultAdapter.class.getSimpleName();
     public static final Gson GSON = new Gson();
+    private static final Gson BROKER_IPC_TELEMETRY_GSON = new GsonBuilder()
+            .registerTypeAdapterFactory(new BrokerIpcTelemetryTypeAdapterFactory())
+            .create();
 
+    private static final Long INVALID_TIMESTAMP = -1L;
     private static final String DCF_NOT_SUPPORTED_ERROR = "deviceCodeFlowAuthRequest() not supported in BrokerMsalController";
+    private static final String WEBAPPS_ENTRY_IS_NULL_ERROR = "WebApps entry in the bundle is null";
 
     interface IBooleanCallback {
         boolean getResult();
@@ -133,14 +159,129 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
     @Override
     public Bundle bundleFromAuthenticationResult(@NonNull final ILocalAuthenticationResult authenticationResult,
                                                  @Nullable final String negotiatedBrokerProtocolVersion) {
+        return bundleFromAuthenticationResult(authenticationResult, null, negotiatedBrokerProtocolVersion);
+    }
+
+    /**
+     * MSAL-only overload that attaches an onboarding telemetry blob (serialized JSON) to the
+     * success-path result bundle. The broker uses this to ship the finalized onboarding blob
+     * back to the client on a successful interactive token request. Symmetric with
+     * {@link #bundleFromBaseException} which carries the blob via {@link BaseException#getOnboardingBlob()}.
+     *
+     * @param onboardingBlob The finalized onboarding telemetry blob, or null if none.
+     */
+    @NonNull
+    public Bundle bundleFromAuthenticationResult(@NonNull final ILocalAuthenticationResult authenticationResult,
+                                                 @Nullable final String onboardingBlob,
+                                                 @Nullable final String negotiatedBrokerProtocolVersion) {
+        return bundleFromAuthenticationResult(
+                authenticationResult,
+                onboardingBlob,
+                negotiatedBrokerProtocolVersion,
+                null
+        );
+    }
+
+    /**
+     * Creates a success bundle with optional Broker battery optimization context.
+     *
+     * @param powerOptimizationSettings The freshly measured Broker status, or null when disabled.
+     */
+    @NonNull
+    public Bundle bundleFromAuthenticationResult(
+            @NonNull final ILocalAuthenticationResult authenticationResult,
+            @Nullable final String onboardingBlob,
+            @Nullable final String negotiatedBrokerProtocolVersion,
+            @Nullable final String powerOptimizationSettings) {
         final String methodTag = TAG + ":bundleFromAuthenticationResult";
         Logger.info(methodTag, "Constructing result bundle from ILocalAuthenticationResult");
 
         final Bundle resultBundle = bundleFromBrokerResult(
-                buildBrokerResultFromAuthenticationResult(authenticationResult, negotiatedBrokerProtocolVersion),
+                buildBrokerResultFromAuthenticationResult(
+                        authenticationResult,
+                        onboardingBlob,
+                        negotiatedBrokerProtocolVersion,
+                        powerOptimizationSettings
+                ),
                 negotiatedBrokerProtocolVersion);
         resultBundle.putBoolean(AuthenticationConstants.Broker.BROKER_REQUEST_V2_SUCCESS, true);
 
+        return resultBundle;
+    }
+
+    @NonNull
+    @Override
+    public Bundle bundleFromAuthenticationResultForWebApps(@NonNull final ILocalAuthenticationResult authenticationResult,
+                                                           @Nullable final String negotiatedBrokerProtocolVersion,
+                                                           @Nullable final String state) throws BaseException {
+        final String methodTag = TAG + ":bundleFromAuthenticationResultForWebApps";
+        final String errorMessagePrefix = "Received a successful interactive result, but: ";
+        Logger.info(methodTag, "Constructing result bundle from ILocalAuthenticationResult");
+
+        final Bundle resultBundle = new Bundle();
+
+        final String homeAccountId = authenticationResult.getUniqueId();
+        String clientInfo = authenticationResult.getAccountRecord().getClientInfo();
+        if (StringUtil.isNullOrEmpty(clientInfo)) {
+            clientInfo = WebAppsUtil.homeAccountIdToClientInfo(homeAccountId);
+            if (StringUtil.isNullOrEmpty(clientInfo)) {
+                throw new ClientException(
+                        ErrorStrings.UNKNOWN_ERROR,
+                        errorMessagePrefix + "clientInfo was not present in result and could not be derived from homeAccountId."
+                );
+            }
+        }
+        // Some parameters can be null, so double checking.
+        final String expiresOn = WebAppsUtil.requireNotNullOrEmpty(authenticationResult.getAccessTokenRecord().getExpiresOn(), WebAppsGetTokenSubOperationResponse.FIELD_EXPIRES_IN);
+        final String idToken = WebAppsUtil.requireNotNullOrEmpty(authenticationResult.getIdToken(), WebAppsGetTokenSubOperationResponse.FIELD_ID_TOKEN);
+        // When ESTS makes a lookup mode request, id token is set to "none". We have logic to get the username from the account data storage.
+        // However, in the case where we don't find the username in the cache (for whatever reason), we won't block the lookup mode response from being sent back.
+        final String rawUsername = authenticationResult.getAccountRecord().getUsername();
+        final String username = Objects.equals(rawUsername, SchemaUtil.MISSING_FROM_THE_TOKEN_RESPONSE)
+                ? null
+                : WebAppsUtil.requireNotNullOrEmpty(rawUsername, WebAppsAccountItem.FIELD_USER_NAME);
+        final WebAppsAccountItem accountItem = new WebAppsAccountItem(username, homeAccountId, null);
+
+        final WebAppsGetTokenSubOperationResponse getTokenResponse = new WebAppsGetTokenSubOperationResponse(
+                state,
+                WebAppsUtil.computeRemainingSeconds(expiresOn),
+                null, // TODO (AB#3420725): Once design for MATS properties is finalized, populate this field.
+                clientInfo,
+                accountItem,
+                idToken,
+                authenticationResult.getAccessToken(),
+                String.join(" ", authenticationResult.getScope())
+        );
+        final String getTokenJsonString = AuthenticationSchemeTypeAdapter.getGsonInstance().toJson(
+                getTokenResponse,
+                WebAppsGetTokenSubOperationResponse.class
+        );
+        if (BrokerProtocolVersionUtil.canCompressBrokerPayloads(negotiatedBrokerProtocolVersion)) {
+            try {
+                byte[] compressedBytes = compressString(getTokenJsonString);
+                Logger.info(methodTag, "GetToken Result, raw payload size:"
+                        + getTokenJsonString.getBytes(AuthenticationConstants.CHARSET_UTF8).length + " ,compressed bytes " + compressedBytes.length
+                );
+                resultBundle.putByteArray(
+                        BROKER_WEB_APPS_SUCCESSFUL_RESULT_COMPRESSED,
+                        compressedBytes
+                );
+            } catch (IOException e) {
+                Logger.error(methodTag, "Failed to compress GetToken  Result, sending as jsonString ", e);
+                resultBundle.putString(
+                        BROKER_WEB_APPS_SUCCESSFUL_RESULT,
+                        getTokenJsonString
+                );
+            }
+        } else {
+            Logger.info(methodTag, "Broker protocol version: " + negotiatedBrokerProtocolVersion +
+                    " lower than compression changes, sending as string"
+            );
+            resultBundle.putString(
+                    BROKER_WEB_APPS_SUCCESSFUL_RESULT,
+                    getTokenJsonString
+            );
+        }
         return resultBundle;
     }
 
@@ -152,6 +293,36 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
     public BrokerResult buildBrokerResultFromAuthenticationResult
             (@NonNull final ILocalAuthenticationResult authenticationResult,
              @Nullable final String negotiatedBrokerProtocolVersion){
+        return buildBrokerResultFromAuthenticationResult(authenticationResult, null, negotiatedBrokerProtocolVersion);
+    }
+
+    /**
+     * Overload that attaches a serialized onboarding telemetry blob to the resulting
+     * {@link BrokerResult}. Used by the broker to ship the finalized onboarding blob
+     * back to the client on a successful interactive token request.
+     *
+     * @param onboardingBlob The finalized onboarding telemetry blob, or null if none.
+     */
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @NonNull
+    public BrokerResult buildBrokerResultFromAuthenticationResult
+            (@NonNull final ILocalAuthenticationResult authenticationResult,
+             @Nullable final String onboardingBlob,
+             @Nullable final String negotiatedBrokerProtocolVersion){
+        return buildBrokerResultFromAuthenticationResult(
+                authenticationResult,
+                onboardingBlob,
+                negotiatedBrokerProtocolVersion,
+                null
+        );
+    }
+
+    @NonNull
+    public BrokerResult buildBrokerResultFromAuthenticationResult
+            (@NonNull final ILocalAuthenticationResult authenticationResult,
+             @Nullable final String onboardingBlob,
+             @Nullable final String negotiatedBrokerProtocolVersion,
+             @Nullable final String powerOptimizationSettings){
 
         final IAccountRecord accountRecord = authenticationResult.getAccountRecord();
 
@@ -187,8 +358,21 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
                 .extendedExpiresOn(extendedExpiresOn)
                 .cachedAt(Long.parseLong(accessTokenRecord.getCachedAt()))
                 .speRing(authenticationResult.getSpeRing())
+                .powerOptimizationSettings(powerOptimizationSettings)
                 .success(true)
                 .servicedFromCache(authenticationResult.isServicedFromCache());
+
+        // Serialize ClientDataInfo as raw pipe-delimited string for IPC transfer.
+        // The raw field is populated by ClientDataInfo.fromPipeDelimited(), the only
+        // path that populates the parsed fields, so it is safe to ship as-is.
+        if (CommonFlightsManager.INSTANCE.getFlightsProvider().isFlightEnabled(CommonFlight.ENABLE_SERVER_CLIENT_DATA_TELEMETRY)
+                && authenticationResult instanceof LocalAuthenticationResult) {
+            final ClientDataInfo clientDataInfo =
+                    ((LocalAuthenticationResult) authenticationResult).getClientDataInfo();
+            if (clientDataInfo != null) {
+                brokerResultBuilder.clientDataInfoRaw(clientDataInfo.getRaw());
+            }
+        }
 
         if (shouldRemoveRefreshTokenFromResult(authenticationResult, negotiatedBrokerProtocolVersion)){
             brokerResultBuilder.tenantProfileRecords(
@@ -200,6 +384,12 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
                     .tenantProfileRecords(authenticationResult.getCacheRecordWithTenantProfileData())
                     .refreshToken(authenticationResult.getRefreshToken())
                     .refreshTokenAge(authenticationResult.getRefreshTokenAge());
+        }
+
+        // Onboarding telemetry blob (success path) — carried back to the client adapter
+        // which attaches it to AcquireTokenResult. Telemetry-only, never affects auth.
+        if (!StringUtil.isNullOrEmpty(onboardingBlob)) {
+            brokerResultBuilder.onboardingBlob(onboardingBlob);
         }
 
         return brokerResultBuilder.build();
@@ -315,7 +505,22 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
                 .cliTelemErrorCode(exception.getCliTelemErrorCode())
                 .cliTelemSubErrorCode(exception.getCliTelemSubErrorCode())
                 .speRing(exception.getSpeRing())
-                .refreshTokenAge(exception.getRefreshTokenAge());
+                .refreshTokenAge(exception.getRefreshTokenAge())
+                .powerOptimizationSettings(exception.getPowerOptimizationSettings());
+
+        // Serialize ClientDataInfo (server telemetry from x-ms-clientdata) so it
+        // survives the broker IPC boundary on error paths.
+        if (exception.getClientDataInfo() != null
+                && CommonFlightsManager.INSTANCE.getFlightsProvider().isFlightEnabled(CommonFlight.ENABLE_SERVER_CLIENT_DATA_TELEMETRY)) {
+            builder.clientDataInfoRaw(exception.getClientDataInfo().getRaw());
+        }
+
+        // Serialize onboarding telemetry blob so it survives the broker IPC boundary on
+        // error paths — symmetric with the success path which carries the blob on
+        // BrokerResult. Telemetry-only — never affects auth logic.
+        if (!StringUtil.isNullOrEmpty(exception.getOnboardingBlob())) {
+            builder.onboardingBlob(exception.getOnboardingBlob());
+        }
 
         if (exception instanceof ServiceException) {
             final ServiceException serviceException = (ServiceException) exception;
@@ -362,10 +567,25 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
 
     @NonNull
     @Override
-    public ILocalAuthenticationResult authenticationResultFromBundle(@NonNull final Bundle resultBundle) throws ClientException {
-        final String methodTag = TAG + ":authenticationResultFromBundle";
-        final BrokerResult brokerResult = brokerResultFromBundle(resultBundle);
+    public Bundle bundleFromBaseExceptionForWebApps(@NonNull final BaseException exception) {
+        final String methodTag = TAG + ":bundleFromBaseExceptionForWebApps";
+        Logger.info(methodTag, "Constructing webapps result bundle from ClientException");
+        return WebAppsUtil.createErrorResponseBundle(exception, "Error occurred during interactive request");
+    }
 
+    @NonNull
+    @Override
+    public ILocalAuthenticationResult authenticationResultFromBundle(@NonNull final Bundle resultBundle) throws ClientException {
+        return authenticationResultFromBrokerResult(brokerResultFromBundle(resultBundle));
+    }
+
+    /**
+     * Overload that builds the authentication result from an already-deserialized
+     * {@link BrokerResult}. Use this when the caller has the [BrokerResult] in hand
+     * to avoid a redundant deserialization of the result bundle.
+     */
+    public ILocalAuthenticationResult authenticationResultFromBrokerResult(@NonNull final BrokerResult brokerResult) throws ClientException {
+        final String methodTag = TAG + ":authenticationResultFromBrokerResult";
         Logger.info(methodTag, "Broker Result returned from Bundle, constructing authentication result");
 
         final List<ICacheRecord> tenantProfileCacheRecords = brokerResult.getTenantProfileData();
@@ -374,12 +594,23 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
             throw new ClientException(INVALID_BROKER_BUNDLE, "getTenantProfileData is null.");
         }
 
-        return new LocalAuthenticationResult(
+        final LocalAuthenticationResult localAuthResult = new LocalAuthenticationResult(
                 tenantProfileCacheRecords.get(0),
                 tenantProfileCacheRecords,
                 SdkType.MSAL,
                 brokerResult.isServicedFromCache()
         );
+
+        // Deserialize ClientDataInfo from the broker result if available
+        if (CommonFlightsManager.INSTANCE.getFlightsProvider().isFlightEnabled(CommonFlight.ENABLE_SERVER_CLIENT_DATA_TELEMETRY)) {
+            final ClientDataInfo clientDataInfo =
+                    ClientDataInfo.fromPipeDelimited(brokerResult.getClientDataInfoRaw());
+            if (clientDataInfo != null) {
+                localAuthResult.setClientDataInfo(clientDataInfo);
+            }
+        }
+
+        return localAuthResult;
     }
 
     @NonNull
@@ -396,22 +627,171 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
         }
 
         final String exceptionType = brokerResult.getExceptionType();
+        final BrokerPerformanceMetrics metrics = getBrokerPerformanceMetricsFromBundle(resultBundle);
+        final BrokerIpcTelemetry brokerIpcTelemetry = getBrokerIpcTelemetryFromBundle(resultBundle);
+        final BaseException baseException;
 
         if (!StringUtil.isNullOrEmpty(exceptionType)) {
-            return getBaseExceptionFromExceptionType(exceptionType, brokerResult);
+            baseException = getBaseExceptionFromExceptionType(exceptionType, brokerResult);
         } else {
             // This code is here for legacy purposes where old versions of broker (3.1.8 or below)
             // wouldn't return exception type in the result.
             Logger.info(methodTag, "Exception type is not returned from the broker, " +
                     "using error codes to transform to the right exception");
-            return getBaseExceptionFromErrorCodes(brokerResult);
+            baseException = getBaseExceptionFromErrorCodes(brokerResult);
         }
+
+        // Attach broker performance metrics if available
+        if (metrics != null) {
+            baseException.setBrokerPerformanceMetrics(metrics);
+        }
+        // Attach broker IPC telemetry if available
+        if (brokerIpcTelemetry != null) {
+            baseException.setBrokerIpcTelemetry(brokerIpcTelemetry);
+        }
+
+        // Restore ClientDataInfo (server telemetry) from the broker result so callers
+        // catching the exception can inspect server-side error context.
+        if (!StringUtil.isNullOrEmpty(brokerResult.getClientDataInfoRaw())
+                && CommonFlightsManager.INSTANCE.getFlightsProvider().isFlightEnabled(CommonFlight.ENABLE_SERVER_CLIENT_DATA_TELEMETRY)) {
+            baseException.setClientDataInfo(
+                    ClientDataInfo.fromPipeDelimited(brokerResult.getClientDataInfoRaw())
+            );
+        }
+
+        // Restore onboarding telemetry blob from the broker result so callers catching
+        // the exception (e.g., OneAuth) can include onboarding telemetry for failure
+        // outcomes — symmetric with the success path which attaches the blob to
+        // AcquireTokenResult. Telemetry-only — never affects auth logic.
+        final String onboardingBlob = getOnboardingBlobFromBundle(brokerResult);
+        if (!StringUtil.isNullOrEmpty(onboardingBlob)) {
+            baseException.setOnboardingBlob(onboardingBlob);
+        }
+        baseException.setPowerOptimizationSettings(brokerResult.getPowerOptimizationSettings());
+
+        // Set broker app info if available
+        if (resultBundle.containsKey(AuthenticationConstants.Broker.BROKER_VERSION)) {
+            baseException.setBrokerAppVersion(
+                    resultBundle.getString(AuthenticationConstants.Broker.BROKER_VERSION)
+            );
+        }
+        final String brokerPackageName = getBrokerPackageName(resultBundle);
+        if (!StringUtil.isNullOrEmpty(brokerPackageName)) {
+            baseException.setBrokerAppPackageName(brokerPackageName);
+        }
+
+        return baseException;
+    }
+
+    /**
+     * Extracts broker performance metrics from the result bundle if available.
+     *
+     * @param resultBundle The result bundle returned from the broker.
+     * @return {@link BrokerPerformanceMetrics} if available, null otherwise.
+     */
+    @Nullable
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    public BrokerPerformanceMetrics getBrokerPerformanceMetricsFromBundle(@NonNull final Bundle resultBundle) {
+        final long brokerRequestReceivedTimestamp = resultBundle.getLong(
+                BROKER_REQUEST_RECEIVED_TIMESTAMP,
+                INVALID_TIMESTAMP
+        );
+        final long brokerResponseGenerationTimestamp = resultBundle.getLong(
+                BROKER_RESPONSE_GENERATION_TIMESTAMP,
+                INVALID_TIMESTAMP
+        );
+        final int silentExecutorPoolSize = resultBundle.getInt(
+                BROKER_SILENT_EXECUTOR_POOL_SIZE,
+                CommandDispatcher.getDefaultSilentExecutorPoolSize()
+        );
+
+        if (brokerRequestReceivedTimestamp != INVALID_TIMESTAMP && brokerResponseGenerationTimestamp != INVALID_TIMESTAMP) {
+            return new BrokerPerformanceMetrics(
+                    brokerRequestReceivedTimestamp,
+                    brokerResponseGenerationTimestamp,
+                    silentExecutorPoolSize
+            );
+        } else {
+            Logger.warn(TAG, "Broker performance metrics not found in the result bundle.");
+            return null;
+        }
+    }
+
+    /**
+     * Extracts broker IPC telemetry from the result bundle if available and valid.
+     * <p>
+     * Best-effort by contract: null, empty, malformed, and schema-invalid payloads all
+     * degrade to null. This method never throws — it is called on both the success and the
+     * error result path, where an escaping exception would respectively fail an auth that
+     * already succeeded, or replace the broker's real error with an unrelated parse failure.
+     *
+     * @param resultBundle The result bundle returned from the broker.
+     * @return {@link BrokerIpcTelemetry} if available and valid, null otherwise.
+     */
+    @Nullable
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    BrokerIpcTelemetry getBrokerIpcTelemetryFromBundle(@NonNull final Bundle resultBundle) {
+        final String methodTag = TAG + ":getBrokerIpcTelemetryFromBundle";
+        final String telemetryJson = resultBundle.getString(BROKER_IPC_TELEMETRY);
+        try {
+            return BROKER_IPC_TELEMETRY_GSON.fromJson(telemetryJson, BrokerIpcTelemetry.class);
+        } catch (final Exception e) {
+            // Deliberately broad: telemetry is diagnostic-only and this method is called on
+            // both the success and error result paths, so an escaping exception would either
+            // fail an auth that already succeeded or mask the broker's real error. The set of
+            // types thrown out of BrokerIpcTelemetryTypeAdapterFactory and the reflective Gson
+            // adapters beneath it is not something this method should have to enumerate, and it
+            // can widen across Gson upgrades without notice.
+            // Errors are not caught — masking OutOfMemoryError does more harm than it prevents.
+            Logger.warn(methodTag, "Failed to deserialize broker IPC telemetry: "
+                    + e.getClass().getSimpleName() + " - " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Extracts the onboarding telemetry blob (JSON string) from the result bundle.
+     * Best-effort: returns null if the bundle cannot be deserialized into a BrokerResult
+     * or if no blob is present. Telemetry failures must never fail an otherwise-successful
+     * auth result. Blob contents are not logged (may carry sessionCorrelationId).
+     *
+     * If the caller has already deserialized the [BrokerResult], prefer the overload
+     * [getOnboardingBlobFromBundle(BrokerResult)] to avoid a second deserialization.
+     */
+    @Nullable
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    public String getOnboardingBlobFromBundle(@NonNull final Bundle resultBundle) {
+        final String methodTag = TAG + ":getOnboardingBlobFromBundle";
+        try {
+            final BrokerResult brokerResult = brokerResultFromBundle(resultBundle);
+            return brokerResult.getOnboardingBlob();
+        } catch (final ClientException e) {
+            Logger.warn(methodTag, "Failed to extract onboarding blob from broker result: " + e.getErrorCode());
+            return null;
+        }
+    }
+
+    /**
+     * Overload that reads the onboarding telemetry blob from a {@link BrokerResult}
+     * that has already been deserialized by the caller. Use this when you already
+     * have a [BrokerResult] in hand to avoid a second deserialization of the bundle.
+     */
+    @Nullable
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    public String getOnboardingBlobFromBundle(@NonNull final BrokerResult brokerResult) {
+        return brokerResult.getOnboardingBlob();
     }
 
     @NonNull
     @Override
     public AcquirePrtSsoTokenResult getAcquirePrtSsoTokenResultFromBundle(Bundle resultBundle) {
         return GSON.fromJson(resultBundle.getString(BROKER_GENERATE_SSO_TOKEN_RESULT), AcquirePrtSsoTokenResult.class);
+    }
+
+    @NonNull
+    @Override
+    public AcquirePrtSsoTokenBatchResult getAcquirePrtSsoTokenBatchResultFromBundle(Bundle resultBundle) {
+        return GSON.fromJson(resultBundle.getString(BROKER_GENERATE_ALL_SSO_TOKENS_RESULT), AcquirePrtSsoTokenBatchResult.class);
     }
 
     @NonNull
@@ -781,6 +1161,7 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
 
     /**
      * Get authorizationResult from resultBundle for Device Code Flow
+     *
      * @param resultBundle The bundle to interpret
      * @return authorizationResult {@link AuthorizationResult}
      * @throws BaseException
@@ -790,6 +1171,12 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
     public AuthorizationResult getDeviceCodeFlowAuthResultFromResultBundle(@NonNull final Bundle resultBundle) throws BaseException, ClientException {
         final String serializedDCFAuthResult = resultBundle.getString(AuthenticationConstants.Broker.BROKER_DCF_AUTH_RESULT);
         if (serializedDCFAuthResult != null) {
+            // Broker IPC telemetry is deliberately not read here. AuthorizationResult does not
+            // implement IBrokerIpcTelemetryProvider — only AcquireTokenResult and BaseException do —
+            // so there is nowhere on the success result to attach it. Surfacing DCF step-1 telemetry
+            // would require widening a common4j result type, which is tracked separately.
+            // Note this only affects the success path: the failure path below funnels through
+            // getBaseExceptionFromBundle, which does attach telemetry to the thrown BaseException.
             final AuthorizationResult authorizationResult = ObjectMapper.deserializeJsonStringToObject(serializedDCFAuthResult, MicrosoftStsAuthorizationResult.class);
             return authorizationResult;
         }
@@ -806,6 +1193,7 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
 
     /**
      * Get acquireTokenResult from resultBundle for Device Code Flow
+     *
      * @param resultBundle The bundle to interpret
      * @return acquireTokenResult {@link AcquireTokenResult}
      * @throws BaseException
@@ -829,10 +1217,23 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
 
             if (resultBundle.getBoolean(AuthenticationConstants.Broker.BROKER_REQUEST_V2_SUCCESS)) {
                 final AcquireTokenResult acquireTokenResult = new AcquireTokenResult();
-                acquireTokenResult.setLocalAuthenticationResult(authenticationResultFromBundle(resultBundle));
+                final ILocalAuthenticationResult authResult = authenticationResultFromBundle(resultBundle);
+                acquireTokenResult.setLocalAuthenticationResult(authResult);
+
+                final BrokerIpcTelemetry ipcTelemetry = getBrokerIpcTelemetryFromBundle(resultBundle);
+                if (ipcTelemetry != null) {
+                    acquireTokenResult.setBrokerIpcTelemetry(ipcTelemetry);
+                }
+
                 span.setStatus(StatusCode.OK);
                 return acquireTokenResult;
             } else if (brokerResult.getErrorCode().equals(ErrorStrings.DEVICE_CODE_FLOW_AUTHORIZATION_PENDING_ERROR_CODE)) {
+                // Returning null signals BrokerMsalController.acquireDeviceCodeFlowToken to sleep
+                // and poll again. Any broker IPC telemetry on this intermediate poll is discarded
+                // by design: each poll is a separate broker request with its own EventCollector,
+                // and AcquireTokenResult — the only carrier available here — is not constructed on
+                // this branch. The terminal poll (success above, or the throw below) is the one
+                // whose telemetry reaches the caller.
                 span.setStatus(StatusCode.OK, "authorization_pending response");
                 return null;
             }
@@ -852,15 +1253,62 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
     AcquireTokenResult getAcquireTokenResultFromResultBundle(@NonNull final Bundle resultBundle) throws BaseException {
         final MsalBrokerResultAdapter resultAdapter = new MsalBrokerResultAdapter();
         if (resultBundle.getBoolean(AuthenticationConstants.Broker.BROKER_REQUEST_V2_SUCCESS)) {
+            // Deserialize BrokerResult once and reuse for both the local authentication result
+            // and the onboarding telemetry blob, instead of letting authenticationResultFromBundle
+            // and getOnboardingBlobFromBundle each pay the deserialization cost.
+            final BrokerResult brokerResult = resultAdapter.brokerResultFromBundle(resultBundle);
+
             final AcquireTokenResult acquireTokenResult = new AcquireTokenResult();
             acquireTokenResult.setLocalAuthenticationResult(
-                    resultAdapter.authenticationResultFromBundle(resultBundle)
+                    resultAdapter.authenticationResultFromBrokerResult(brokerResult)
             );
+            acquireTokenResult.setPowerOptimizationSettings(
+                    brokerResult.getPowerOptimizationSettings()
+            );
+            // Set broker performance metrics if available
+            final BrokerPerformanceMetrics metrics = resultAdapter.getBrokerPerformanceMetricsFromBundle(resultBundle);
+            if (metrics != null) {
+                acquireTokenResult.setBrokerPerformanceMetrics(metrics);
+            }
+
+            final BrokerIpcTelemetry ipcTelemetry =
+                    resultAdapter.getBrokerIpcTelemetryFromBundle(resultBundle);
+            if (ipcTelemetry != null) {
+                acquireTokenResult.setBrokerIpcTelemetry(ipcTelemetry);
+            }
+
+            // Set broker app info if available
+            if (resultBundle.containsKey(AuthenticationConstants.Broker.BROKER_VERSION)) {
+                acquireTokenResult.setBrokerAppVersion(
+                        resultBundle.getString(AuthenticationConstants.Broker.BROKER_VERSION)
+                );
+            }
+            final String brokerPackageName = getBrokerPackageName(resultBundle);
+            if (!StringUtil.isNullOrEmpty(brokerPackageName)) {
+                acquireTokenResult.setBrokerAppPackageName(brokerPackageName);
+            }
+
+            // Set onboarding telemetry blob if present (best-effort; never fails the result).
+            final String onboardingBlob = resultAdapter.getOnboardingBlobFromBundle(brokerResult);
+            if (onboardingBlob != null) {
+                acquireTokenResult.setOnboardingBlob(onboardingBlob);
+            }
 
             return acquireTokenResult;
         }
 
         throw getBaseExceptionFromBundle(resultBundle);
+    }
+
+    @Nullable
+    private String getBrokerPackageName(@NonNull final Bundle resultBundle) {
+        final String activeBrokerPackageName =
+                resultBundle.getString(ACTIVE_BROKER_PACKAGE_NAME_KEY);
+        if (!StringUtil.isNullOrEmpty(activeBrokerPackageName)) {
+            return activeBrokerPackageName;
+        }
+
+        return resultBundle.getString(AuthenticationConstants.Broker.BROKER_PACKAGE_NAME);
     }
 
     @NonNull
@@ -918,6 +1366,7 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
     /**
      * Get resource account record from the result bundle. If successful, new account
      * record part of ICachedRecord is returned.
+     *
      * @param bundle The result bundle from the broker.
      * @throws BaseException
      */
@@ -1035,5 +1484,59 @@ public class MsalBrokerResultAdapter implements IBrokerResultAdapter {
             throw this.getBaseExceptionFromBundle(resultBundle);
         }
         return aadDeviceIdRecord;
+    }
+
+    /**
+     * Gets the supported web apps contract string from the result bundle.
+     * @param resultBundle The result bundle from the broker.
+     */
+    @NonNull
+    public String getSupportedWebAppsContractFromBundle(@NonNull final Bundle resultBundle) throws ClientException {
+        final String result = resultBundle.getString(BROKER_WEBAPPS_GET_CONTRACTS_RESULT);
+        if (result == null) {
+            throw new ClientException(INVALID_BROKER_BUNDLE, WEBAPPS_ENTRY_IS_NULL_ERROR + " for " + BROKER_WEBAPPS_GET_CONTRACTS_RESULT);
+        }
+        return result;
+    }
+
+    /**
+     * Gets the execute web app request result string from the result bundle.
+     *
+     * @param resultBundle The result bundle from the broker.
+     * @return The result string from the web app execution.
+     */
+    @NonNull
+    public String getExecuteWebAppRequestResultFromBundle(@NonNull final Bundle resultBundle) throws ClientException {
+        final String methodTag = TAG + ":getExecuteWebAppRequestResultFromBundle";
+        final String errorMessage = "For interactive request, WebApps entry in bundle null for ";
+        // Expect success payload or error fields reused from BrokerResult
+        if (resultBundle.containsKey(BROKER_WEB_APPS_SUCCESSFUL_RESULT_COMPRESSED)) {
+            byte[] compressedBytes = resultBundle.getByteArray(BROKER_WEB_APPS_SUCCESSFUL_RESULT_COMPRESSED);
+            if (compressedBytes != null) {
+                try {
+                    return GzipUtil.decompressBytesToString(compressedBytes);
+                } catch (final IOException e) {
+                    // We should never hit this ideally unless the string/bytes are malformed for some unknown reason.
+                    Logger.error(methodTag, "Failed to decompress broker result :", e);
+                    throw new ClientException(INVALID_BROKER_BUNDLE, "Failed to decompress broker result", e);
+                }
+            } else {
+                throw new ClientException(INVALID_BROKER_BUNDLE, errorMessage + BROKER_WEB_APPS_SUCCESSFUL_RESULT_COMPRESSED);
+            }
+        } else if (resultBundle.containsKey(BROKER_WEB_APPS_SUCCESSFUL_RESULT)) {
+            final String result = resultBundle.getString(BROKER_WEB_APPS_SUCCESSFUL_RESULT);
+            if (result == null) {
+                throw new ClientException(INVALID_BROKER_BUNDLE, errorMessage + BROKER_WEB_APPS_SUCCESSFUL_RESULT);
+            }
+            return result;
+        } else if (resultBundle.containsKey(BROKER_WEB_APPS_ERROR_RESULT)) {
+            final String result = resultBundle.getString(BROKER_WEB_APPS_ERROR_RESULT);
+            if (result == null) {
+                throw new ClientException(INVALID_BROKER_BUNDLE, errorMessage + BROKER_WEB_APPS_ERROR_RESULT);
+            }
+            return result;
+        } else {
+            throw new ClientException(INVALID_BROKER_BUNDLE, "For interactive request, no response or error found in bundle.");
+        }
     }
 }

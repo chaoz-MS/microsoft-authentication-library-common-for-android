@@ -32,9 +32,12 @@ import com.microsoft.identity.common.java.util.StringUtil;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * A simple metadata store definition that uses INameValueStorage to persist, read,
@@ -58,6 +61,10 @@ public abstract class NameValueStorageFileManagerSimpleCacheImpl<T> implements I
     private final String mKeySingleEntry;
     private final boolean mForceReinsertionOfDuplicates;
     private final Gson mGson = new Gson();
+
+    // Lock per storage name to prevent corruption when multiple instances access the same storage file
+    private static final Map<String, ReentrantReadWriteLock> STORAGE_LOCKS = new ConcurrentHashMap<>();
+    private final ReentrantReadWriteLock metadataCacheLock;
 
     /**
      * Constructs a new NameValueStorageFileManagerSimpleCacheImpl. Convenience class for persisting
@@ -93,6 +100,8 @@ public abstract class NameValueStorageFileManagerSimpleCacheImpl<T> implements I
         mStorage = components.getStorageSupplier().getUnencryptedNameValueStore(name, String.class);
         mKeySingleEntry = singleKey;
         mForceReinsertionOfDuplicates = forceReinsertionOfDuplicates;
+        // Get or create a lock for this specific storage file
+        metadataCacheLock = STORAGE_LOCKS.computeIfAbsent(name, k -> new ReentrantReadWriteLock());
     }
 
     private interface NamedRunnable<V> extends Callable<V> {
@@ -121,53 +130,80 @@ public abstract class NameValueStorageFileManagerSimpleCacheImpl<T> implements I
 
     @Override
     public boolean insert(final T t) {
-        return execWithTiming(new NamedRunnable<Boolean>() {
-            @Override
-            public String getName() {
-                return "insert";
-            }
-
-            @Override
-            public Boolean call() {
-                final Set<T> allMetadata = new HashSet<>(getAll());
-
-                if (mForceReinsertionOfDuplicates) {
-                    // This is a bit of workaround for Set's default behavior
-                    // where items already within the Set are not replaced if they are
-                    // inserted but already exist.
-                    // This makes it behave more like a Map.
-                    allMetadata.remove(t);
+        metadataCacheLock.writeLock().lock();
+        try {
+            return execWithTiming(new NamedRunnable<Boolean>() {
+                @Override
+                public String getName() {
+                    return "insert";
                 }
 
-                allMetadata.add(t);
-                final String json = mGson.toJson(allMetadata);
-                mStorage.put(mKeySingleEntry, json);
-                return true;
-            }
-        });
+                @Override
+                public Boolean call() {
+                    final Set<T> allMetadata = new HashSet<>(getAllInternal());
+
+                    if (mForceReinsertionOfDuplicates) {
+                        // This is a bit of workaround for Set's default behavior
+                        // where items already within the Set are not replaced if they are
+                        // inserted but already exist.
+                        // This makes it behave more like a Map.
+                        allMetadata.remove(t);
+                    }
+
+                    allMetadata.add(t);
+                    final String json = mGson.toJson(allMetadata);
+                    mStorage.put(mKeySingleEntry, json);
+                    return true;
+                }
+            });
+        } finally {
+            metadataCacheLock.writeLock().unlock();
+        }
     }
 
     @Override
     public boolean remove(final T t) {
-        return execWithTiming(new NamedRunnable<Boolean>() {
-            @Override
-            public String getName() {
-                return "remove";
-            }
+        metadataCacheLock.writeLock().lock();
+        try {
+            return execWithTiming(new NamedRunnable<Boolean>() {
+                @Override
+                public String getName() {
+                    return "remove";
+                }
 
-            @Override
-            public Boolean call() {
-                final Set<T> allMetadata = new HashSet<>(getAll());
-                allMetadata.remove(t);
-                final String json = mGson.toJson(allMetadata);
-                mStorage.put(mKeySingleEntry, json);
-                return true;
-            }
-        });
+                @Override
+                public Boolean call() {
+                    final Set<T> allMetadata = new HashSet<>(getAllInternal());
+                    allMetadata.remove(t);
+                    final String json = mGson.toJson(allMetadata);
+                    mStorage.put(mKeySingleEntry, json);
+                    return true;
+                }
+            });
+        } finally {
+            metadataCacheLock.writeLock().unlock();
+        }
+
     }
 
     @Override
     public List<T> getAll() {
+        metadataCacheLock.readLock().lock();
+        try {
+            return getAllInternal();
+        } finally {
+            metadataCacheLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Internal helper method to retrieve all items from storage without acquiring a lock.
+     * This method should only be called when a lock (read or write) is already held by the caller.
+     * For external access, use {@link #getAll()} which properly acquires a read lock.
+     *
+     * @return List of all items in the cache
+     */
+    private List<T> getAllInternal() {
         return execWithTiming(new NamedRunnable<List<T>>() {
             @Override
             public String getName() {
@@ -191,17 +227,22 @@ public abstract class NameValueStorageFileManagerSimpleCacheImpl<T> implements I
 
     @Override
     public boolean clear() {
-        return execWithTiming(new NamedRunnable<Boolean>() {
-            @Override
-            public String getName() {
-                return "clear";
-            }
+        metadataCacheLock.writeLock().lock();
+        try {
+            return execWithTiming(new NamedRunnable<Boolean>() {
+                @Override
+                public String getName() {
+                    return "clear";
+                }
 
-            @Override
-            public Boolean call() {
-                mStorage.clear();
-                return true;
-            }
-        });
+                @Override
+                public Boolean call() {
+                    mStorage.clear();
+                    return true;
+                }
+            });
+        } finally {
+            metadataCacheLock.writeLock().unlock();
+        }
     }
 }

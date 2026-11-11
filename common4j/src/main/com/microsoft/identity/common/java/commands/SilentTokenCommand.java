@@ -22,6 +22,7 @@
 //  THE SOFTWARE.
 package com.microsoft.identity.common.java.commands;
 
+import com.microsoft.identity.common.java.BuildConfig;
 import com.microsoft.identity.common.java.WarningType;
 import com.microsoft.identity.common.java.commands.parameters.SilentTokenCommandParameters;
 import com.microsoft.identity.common.java.constants.OAuth2ErrorCode;
@@ -152,10 +153,4 @@ public class SilentTokenCommand extends TokenCommand {
     public boolean isEligibleForCaching() {
         return true;
     }
-
-    @Override
-    public boolean isEligibleForEstsTelemetry() {
-        return true;
-    }
-
 }

@@ -26,19 +26,51 @@ public class LabConstants {
     private static final String NONE = "none";
 
     public static final String DEFAULT_LAB_CLIENT_ID = "f62c5ae3-bf3a-4af5-afa8-a68b800396e9";
+    public static final String DEFAULT_ID4SLAB2_CLIENT_ID = "c6bb302a-1e38-408e-9754-87c18fe81c80";
     public static final String DEFAULT_LAB_SCOPE = "https://request.msidlab.com/.default";
     public static final String KEYVAULT_SCOPE = "https://vault.azure.net/.default";
     public static final String DEFAULT_LAB_CERT_ALIAS = "LabAuth.MSIDLab.com";
-    public static final String MSID_LAB3 = "https://login.microsoftonline.com/msidlab3.com";
-    public static final String MSID_LAB4 = "https://login.microsoftonline.com/msidlab4.com";
+    public static final String ID4SLAB2 = "https://login.microsoftonline.com/id4slab2.onmicrosoft.com";
+    public static final String ID4SLAB1 = "https://login.microsoftonline.com/id4slab1.onmicrosoft.com";
 
+    // TODO, REMOVE LEGACY UserTypes WHEN WE REMOVE LAB QUERY USAGE
     static final class UserType {
-        public static final String CLOUD = "cloud";
+        public static final String BASIC = "basic";
+        public static final String BASIC2 = "basic2";
+        public static final String MSA = "msa";
+        public static final String MDM_CA = "mdm_ca";
+        public static final String MAM_CA = "mam_ca";
+        public static final String MAM_ON_SPO = "mam_on_spo";
+        public static final String TRUE_MAM_CA = "true_mam_ca";
+        public static final String WP = "wp";
         public static final String FEDERATED = "federated";
+        public static final String ANDROID_FEDERATED = "android_federated";
+        public static final String ANDROID_FEDERATED2 = "android_federated2";
+        public static final String DEVICE_ADMIN = "device_admin";
+        public static final String USGOV = "usgov";
+        public static final String USGOV_GUEST = "usgov_guest";
+        public static final String CHINA = "china";
+        public static final String CHINA_GUEST = "china_guest";
+        public static final String PPE = "ppe";
+        public static final String QR_PIN = "qr_pin";
+        public static final String TOKEN_BINDING = "token_binding";
+        public static final String MDM_AND_TOKEN_BINDING = "mdm_and_token_binding";
+        public static final String CBA = "cba";
+        public static final String RESOURCE_ACCOUNT_1 = "resource_account_1";
+        public static final String RESOURCE_ACCOUNT_2 = "resource_account_2";
+        public static final String DUNA_BASIC_1 = "duna_basic_1";
+        public static final String DUNA_BASIC_2 = "duna_basic_2";
+        public static final String DUNA_MAM_CA_1 = "duna_mam_ca_1";
+        public static final String DUNA_MAM_CA_2 = "duna_mam_ca_2";
+        public static final String DUNA_MDM_CA_1 = "duna_mdm_ca_1";
+        public static final String DUNA_MDM_CA_2 = "duna_mdm_ca_2";
+        public static final String DUNA_MFA_1 = "duna_mfa_1";
+        public static final String DUNA_MFA_2 = "duna_mfa_2";
+        public static final String CLOUD = "cloud";
         public static final String ONPREM = "onprem";
         public static final String GUEST = "guest";
-        public static final String MSA = "msa";
         public static final String B2C = "b2c";
+        public static final String CIAM = "ciam";
     }
 
     static final class UserRole {
@@ -63,6 +95,9 @@ public class LabConstants {
         public static final String TRUE_MAM_CA = "truemamca";
         public static final String MAM_SPO = "mamspo";
         public static final String BLOCKED = "blocked";
+        public static final String GLOBAL_MFA = "globalmfa";
+        public static final String AUTHAPP_LBAC = "authapplbac";
+        public static final String AUTHAPP_RICH_CONTEXT = "authapprichcontext";
     }
 
     static final class HomeDomain {
@@ -152,6 +187,8 @@ public class LabConstants {
         public static final String MFAONEXO = "MFAONEXO";
         public static final String MAMCA = "MAMCA";
         public static final String MDMCA = "MDMCA";
+        public static final String AUTHAPP_LBAC = "AuthappLBAC";
+        public static final String AUTHAPP_RICH_CONTEXT = "AuthappRichContext";
     }
 
     static final class TempUserPolicy {
@@ -160,11 +197,13 @@ public class LabConstants {
         public static final String MFAONEXO = TempUserType.MFAONEXO;
         public static final String MAMCA = TempUserType.MAMCA;
         public static final String MDMCA = TempUserType.MDMCA;
+        public static final String AUTHAPP_LBAC = TempUserType.AUTHAPP_LBAC;
+        public static final String AUTHAPP_RICH_CONTEXT = TempUserType.AUTHAPP_RICH_CONTEXT;
     }
 
     static final class ResetOperation {
-        public static final String MFA = "MFA";
-        public static final String PASSWORD = "Password";
+        public static final String MFA = "mfa";
+        public static final String PASSWORD = "password";
     }
 
     static final class HasAltId {

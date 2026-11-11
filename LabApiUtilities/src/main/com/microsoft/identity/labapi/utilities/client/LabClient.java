@@ -22,6 +22,8 @@
 // THE SOFTWARE.
 package com.microsoft.identity.labapi.utilities.client;
 
+import static com.microsoft.identity.labapi.utilities.constants.LabConstants.KEYVAULT_SCOPE;
+
 import com.microsoft.identity.internal.test.labapi.ApiException;
 import com.microsoft.identity.internal.test.labapi.Configuration;
 import com.microsoft.identity.internal.test.labapi.api.ConfigApi;
@@ -29,14 +31,15 @@ import com.microsoft.identity.internal.test.labapi.api.CreateTempUserApi;
 import com.microsoft.identity.internal.test.labapi.api.DeleteDeviceApi;
 import com.microsoft.identity.internal.test.labapi.api.DisablePolicyApi;
 import com.microsoft.identity.internal.test.labapi.api.EnablePolicyApi;
-import com.microsoft.identity.internal.test.labapi.api.LabSecretApi;
+import com.microsoft.identity.internal.test.labapi.api.KeyVaultSecretsApi;
 import com.microsoft.identity.internal.test.labapi.api.ResetApi;
 import com.microsoft.identity.internal.test.labapi.model.ConfigInfo;
 import com.microsoft.identity.internal.test.labapi.model.CustomSuccessResponse;
-import com.microsoft.identity.internal.test.labapi.model.SecretResponse;
+import com.microsoft.identity.internal.test.labapi.model.SecretBundle;
 import com.microsoft.identity.internal.test.labapi.model.TempUser;
 import com.microsoft.identity.internal.test.labapi.model.UserInfo;
 import com.microsoft.identity.labapi.utilities.authentication.LabApiAuthenticationClient;
+import com.microsoft.identity.labapi.utilities.constants.LabConstants;
 import com.microsoft.identity.labapi.utilities.constants.ProtectionPolicy;
 import com.microsoft.identity.labapi.utilities.constants.TempUserType;
 import com.microsoft.identity.labapi.utilities.constants.ResetOperation;
@@ -47,13 +50,14 @@ import com.microsoft.identity.labapi.utilities.exception.LabError;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
-@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@RequiredArgsConstructor(access = AccessLevel.PUBLIC)
 public class LabClient implements ILabClient {
 
     private final LabApiAuthenticationClient mLabApiAuthenticationClient;
@@ -68,127 +72,53 @@ public class LabClient implements ILabClient {
 
     public static final long TEMP_USER_WAIT_TIME = TimeUnit.SECONDS.toMillis(35);
 
-    @Override
-    public ILabAccount getLabAccount(@NonNull final LabQuery labQuery) throws LabApiException {
-        // Adding a second attempt here, api sometimes fails to fetch the user.
-        try {
-            return getLabAccountInternalWithQuery(labQuery);
-        } catch (final Exception e){
-            // Seems new Lab API may fail temp user creation, without throwing a lab exception
-            // (we may get a non-error response, with a null temp user field)
-            // So, we will make this exception handling generic, and retry in all failure cases
+    private static final String ACCOUNT_UPN_JSON_STRING_SECRET_NAME = "Android-ID4SLAB2-User-Identifiers";
+    private String mAlternativeUpnJsonStringSecretName;
+    private Map<String, LabJsonStringAccountEntry> labUPNJsonMap = null;
 
-            // Wait for a bit
-            try {
-                Thread.sleep(LAB_API_RETRY_WAIT);
-            } catch (final InterruptedException e2) {
-                e2.printStackTrace();
-            }
+    /**
+     * Holds the most recently fetched or created {@link ILabAccount} for this process.
+     * <p>
+     * Updated after each successful account fetch or temporary user creation via
+     * {@link LabClient}. Intended as a convenience for single-threaded test scenarios
+     * that need access to the last lab account without explicitly passing it between
+     * methods.
+     * </p>
+     * <p>
+     * The field is {@code volatile} to ensure writes performed by one thread are
+     * immediately visible to all other threads. It may be {@code null} if no account
+     * has been fetched or created yet. Do not rely on this field in multi-threaded
+     * or production code.
+     * </p>
+     */
+    public static volatile ILabAccount latestLabAccount = null;
 
-            return getLabAccountInternalWithQuery(labQuery);
-        }
+    /**
+     * Updates {@link #latestLabAccount} from a static context, avoiding the
+     * {@code ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD} SpotBugs warning that would
+     * be raised if instance methods assigned the field directly.
+     * <p>
+     * This method is thread-safe; the underlying field is {@code volatile}, so
+     * the write is immediately visible to all threads. {@code account} may be
+     * {@code null} to clear the stored account.
+     * </p>
+     *
+     * @param account The {@link ILabAccount} to store as the latest; may be {@code null}.
+     */
+    private static void setLatestLabAccount(final ILabAccount account) {
+        latestLabAccount = account;
     }
 
-    private ILabAccount getLabAccountInternalWithQuery(@NonNull final LabQuery labQuery) throws LabApiException {
-        final List<ConfigInfo> configInfos = fetchConfigsFromLab(labQuery);
-        // for each query, lab actually returns a list of accounts..all of which fit the criteria..
-        // usually we only need one such account, and hence over here we are just picking the first
-        // element of the list.
-        final ConfigInfo configInfo = configInfos.get(0);
-        return getLabAccountObject(configInfo);
-    }
-
-    @Override
-    public ILabAccount getLabAccount(@NonNull final String upn) throws LabApiException {
-        final List<ConfigInfo> configInfos = fetchConfigsFromLab(upn);
-        // We still get a list of configs despite passing in a single upn, so we select the account from the list.
-        final ConfigInfo configInfo = configInfos.get(0);
-        return getLabAccountObject(configInfo);
-    }
-
-    @Override
-    public List<ILabAccount> getLabAccounts(@NonNull final LabQuery labQuery) throws LabApiException {
-        final List<ConfigInfo> configInfos = fetchConfigsFromLab(labQuery);
-
-        final List<ILabAccount> labAccounts = new ArrayList<>(configInfos.size());
-
-        for (final ConfigInfo configInfo : configInfos) {
-            labAccounts.add(getLabAccountObject(configInfo));
-        }
-
-        return labAccounts;
-    }
-
-    private ILabAccount getLabAccountObject(@NonNull final ConfigInfo configInfo) throws LabApiException {
-        // If the userInfo is null, then no lab account was found
-        final UserInfo userInfo = configInfo.getUserInfo();
-        if (userInfo == null) {
-            throw new AssertionError("Lab account was not found.");
-        }
-
-        // for guest accounts the UPN is located under homeUpn field
-        String username = userInfo.getHomeUPN();
-        if (username == null || username.equals("") || username.equalsIgnoreCase("None")) {
-            // for accounts that are NOT guest..the UPN is directly on the UPN field
-            username = configInfo.getUserInfo().getUpn();
-        }
-
-        final String password = getPassword(configInfo);
-
-        return new LabAccount.LabAccountBuilder()
-                .username(username)
-                .password(password)
-                .userType(UserType.fromName(configInfo.getUserInfo().getUserType()))
-                .homeTenantId(configInfo.getUserInfo().getHomeTenantID())
-                .configInfo(configInfo)
-                .build();
-    }
-
-    private List<ConfigInfo> fetchConfigsFromLab(@NonNull final String upn) throws LabApiException {
-        Configuration.getDefaultApiClient().setAccessToken(
-                mLabApiAuthenticationClient.getAccessToken()
-        );
-        try {
-            final ConfigApi api = new ConfigApi();
-            return api.apiConfigUpnGet(upn);
-        } catch (final com.microsoft.identity.internal.test.labapi.ApiException ex) {
-            throw new LabApiException(LabError.FAILED_TO_GET_ACCOUNT_FROM_LAB, ex);
-        }
-    }
-
-    public List<ConfigInfo> fetchConfigsFromLab(@NonNull final LabQuery query) throws LabApiException {
-        Configuration.getDefaultApiClient().setAccessToken(
-                mLabApiAuthenticationClient.getAccessToken()
-        );
-        try {
-            final ConfigApi api = new ConfigApi();
-            return api.apiConfigGet(
-                    valueOf(query.getUserType()),
-                    valueOf(query.getUserRole()),
-                    valueOf(query.getMfa()),
-                    valueOf(query.getProtectionPolicy()),
-                    valueOf(query.getHomeDomain()),
-                    valueOf(query.getHomeUpn()),
-                    valueOf(query.getB2cProvider()),
-                    valueOf(query.getFederationProvider()),
-                    valueOf(query.getAzureEnvironment()),
-                    valueOf(query.getGuestHomeAzureEnvironment()),
-                    valueOf(query.getAppType()),
-                    valueOf(query.getPublicClient()),
-                    valueOf(query.getSignInAudience()),
-                    valueOf(query.getGuestHomedIn()),
-                    valueOf(query.getHasAltId()),
-                    valueOf(query.getAltIdSource()),
-                    valueOf(query.getAltIdType()),
-                    valueOf(query.getPasswordPolicyValidityPeriod()),
-                    valueOf(query.getPasswordPolicyNotificationDays()),
-                    valueOf(query.getTokenLifetimePolicy()),
-                    valueOf(query.getTokenType()),
-                    valueOf(query.getTokenLifetime())
-            );
-        } catch (final com.microsoft.identity.internal.test.labapi.ApiException ex) {
-            throw new LabApiException(LabError.FAILED_TO_GET_ACCOUNT_FROM_LAB, ex);
-        }
+    /**
+     * This method allows tests to specify an alternative secret name for the UPN JSON string in Key Vault,
+     * as the default points specifically to Android Team's upn json. T
+     *
+     * IF YOU ARE THE ONEAUTH TEAM, PLEASE USE THIS METHOD TO POINT TO YOUR OWN JSON SECRET NAME
+     *
+     * @param secretName The name of the alternative Key Vault secret to use for fetching the UPN JSON string.
+     */
+    public void setAccountUpnJsonStringSecretName(final String secretName) {
+        mAlternativeUpnJsonStringSecretName = secretName;
     }
 
     private String valueOf(final Object obj) {
@@ -242,75 +172,88 @@ public class LabClient implements ILabClient {
 
         final String password = getPassword(tempUser);
 
-        return new LabAccount.LabAccountBuilder()
+        final LabAccount account = new LabAccount.LabAccountBuilder()
                 .username(tempUser.getUpn())
                 .password(password)
                 // all temp users created by Lab Api are currently cloud users
                 .userType(UserType.CLOUD)
                 .homeTenantId(tempUser.getTenantId())
+                .homeObjectId(tempUser.getObjectId())
                 .build();
+
+        setLatestLabAccount(account);
+        return account;
     }
 
     @Override
-    public LabGuestAccount loadGuestAccountFromLab(LabQuery labQuery) throws LabApiException {
-        final List<ConfigInfo> configInfoList = fetchConfigsFromLab(labQuery);
-
-        List<String> guestLabTenants = new ArrayList<>();
-        for (ConfigInfo configInfo : configInfoList) {
-            guestLabTenants.add(configInfo.getUserInfo().getTenantID());
-        }
-
-        // pick one config info object to obtain home tenant information
-        // doesn't matter which one as all have the same home tenant
-        final ConfigInfo configInfo = configInfoList.get(0);
-        final UserInfo userInfo = configInfo.getUserInfo();
-
-        return new LabGuestAccount(
-                userInfo.getHomeUPN(),
-                userInfo.getHomeDomain(),
-                userInfo.getHomeTenantID(),
-                guestLabTenants
+    public String getPasswordSecretFromLabsKeyVault(@NonNull final String secretName) throws LabApiException {
+        Configuration.getKeyVaultApiClient().setAccessToken(
+                mLabApiAuthenticationClient.getAccessTokenForCustomScope(KEYVAULT_SCOPE)
         );
-    }
-
-    @Override
-    public String getPasswordForGuestUser(LabGuestAccount guestUser) throws LabApiException {
-        final String labName = guestUser.getHomeDomain().split("\\.")[0];
-
-        // Adding a second attempt here, api sometimes fails to get the lab secret.
-        try {
-            return getSecret(labName);
-        } catch (final LabApiException e){
-            if (e.getErrorCode().equals(LabError.FAILED_TO_GET_SECRET_FROM_LAB)){
-
-                // Wait for a bit
-                try {
-                    Thread.sleep(LAB_API_RETRY_WAIT);
-                } catch (final InterruptedException e2) {
-                    e2.printStackTrace();
-                }
-
-                // Try to get the secret again
-                return getSecret(labName);
-            } else {
-                throw e;
-            }
-        }
-    }
-
-    @Override
-    public String getSecret(@NonNull final String secretName) throws LabApiException {
-        Configuration.getDefaultApiClient().setAccessToken(
-                mLabApiAuthenticationClient.getAccessToken()
-        );
-        final LabSecretApi labSecretApi = new LabSecretApi();
+        final KeyVaultSecretsApi keyVaultSecretsApi = new KeyVaultSecretsApi();
 
         try {
-            final SecretResponse secretResponse = labSecretApi.apiLabSecretGet(secretName);
-            return secretResponse.getValue();
+            final SecretBundle secretBundle = keyVaultSecretsApi.getKeyVaultSecret(secretName);
+            return secretBundle.getValue();
         } catch (final com.microsoft.identity.internal.test.labapi.ApiException ex) {
             throw new LabApiException(LabError.FAILED_TO_GET_SECRET_FROM_LAB, ex);
         }
+    }
+
+    @Override
+    public Map<String, LabJsonStringAccountEntry> getAccountMapJsonFromMobileBuildKeyVault() throws LabApiException {
+        if (labUPNJsonMap != null) {
+            return labUPNJsonMap;
+        }
+
+        Configuration.getKeyVaultApiClient().setAccessToken(
+                mLabApiAuthenticationClient.getAccessTokenForCustomScope(KEYVAULT_SCOPE)
+        );
+        final KeyVaultSecretsApi keyVaultSecretsApi = new KeyVaultSecretsApi(KeyVaultSecretsApi.MOBILE_BUILD_VAULT_URL);
+
+        final String keyvaultSecret;
+        if (mAlternativeUpnJsonStringSecretName != null && !mAlternativeUpnJsonStringSecretName.isEmpty()) {
+            keyvaultSecret = mAlternativeUpnJsonStringSecretName;
+        } else {
+            keyvaultSecret = ACCOUNT_UPN_JSON_STRING_SECRET_NAME;
+        }
+
+        try {
+            final SecretBundle secretBundle = keyVaultSecretsApi.getKeyVaultSecret(keyvaultSecret);
+
+            labUPNJsonMap = LabJsonStringAccountEntry.parseJsonToMap(secretBundle.getValue());
+            return labUPNJsonMap;
+        } catch (final com.microsoft.identity.internal.test.labapi.ApiException ex) {
+            throw new LabApiException(LabError.FAILED_TO_GET_SECRET_FROM_LAB, ex);
+        }
+    }
+
+    @Override
+    public ILabAccount getAccountFromLabJsonStringInMobileBuildVault(UserType userType) throws LabApiException {
+        // Make sure the UPN JSON map is loaded
+        getAccountMapJsonFromMobileBuildKeyVault();
+
+        final LabJsonStringAccountEntry accountEntry = labUPNJsonMap.get(userType.toString());
+        if (accountEntry == null) {
+            throw new LabApiException(LabError.ACCOUNT_NOT_FOUND_IN_MOBILE_BUILD_KEYVAULT_JSON, " Desired userType: " + userType);
+        }
+        final String accountPassword = getPassword(accountEntry.getKeyVaultEntry());
+
+        final LabAccount account =  new LabAccount.LabAccountBuilder()
+                .username(accountEntry.getUpn())
+                .password(accountPassword)
+                .userType(userType)
+                .homeTenantId(accountEntry.getHomeTenantId())
+                .homeObjectId(accountEntry.getHomeObjectId())
+                .guestTenantId(accountEntry.getGuestTenantId())
+                .associatedClientId(accountEntry.getAssociatedClientId())
+                .azureEnvironment(accountEntry.getAzureEnvironment())
+                .cloudUrl(accountEntry.getCloudUrl())
+                .build();
+
+        setLatestLabAccount(account);
+
+        return account;
     }
 
     @Override
@@ -319,26 +262,25 @@ public class LabClient implements ILabClient {
         Configuration.getDefaultApiClient().setAccessToken(
                 mLabApiAuthenticationClient.getAccessToken()
         );
-
         final DeleteDeviceApi deleteDeviceApi = new DeleteDeviceApi();
 
         try {
-            final CustomSuccessResponse successResponse = deleteDeviceApi.apiDeleteDeviceDelete(
-                    upn, deviceId
-            );
+            final String successResponse = deleteDeviceApi.apiDeleteDeviceDelete(upn, deviceId);
 
             if (successResponse == null) {
                 return false;
             }
 
-            // we probably need a more sophisticated logger integrated into LabApi
-            // for now this is fine
-            System.out.println(successResponse.getResult());
-
-            final String expectedResult = String.format(
-                    "Device : %s, successfully deleted from AAD.", deviceId
-            );
-            return expectedResult.equalsIgnoreCase(successResponse.getResult());
+            // Use tolerant substring match (case-insensitive) rather than exact equality so that
+            // minor backend formatting variations do not cause false failures.
+            final boolean deleted = successResponse.toLowerCase(Locale.ENGLISH)
+                    .contains("successfully deleted");
+            if (deleted) {
+                System.out.println("deleteDevice succeeded: " + successResponse);
+            } else {
+                System.out.println("deleteDevice returned unexpected response: " + successResponse);
+            }
+            return deleted;
         } catch (final com.microsoft.identity.internal.test.labapi.ApiException ex) {
             throw new LabApiException(
                     LabError.FAILED_TO_DELETE_DEVICE, ex,
@@ -352,45 +294,51 @@ public class LabClient implements ILabClient {
                                 @NonNull final String deviceId,
                                 final int numDeleteAttemptsRemaining,
                                 final long waitTimeBeforeEachDeleteAttempt) throws LabApiException {
-        System.out.printf(Locale.ENGLISH, "Delete device attempt remaining #%d%n", (numDeleteAttemptsRemaining));
-        if (numDeleteAttemptsRemaining == 0) {
-            return false; // tried all attempts and failed to delete device
+        if (numDeleteAttemptsRemaining <= 0) {
+            return false; // caller requested zero attempts
         }
 
-        try {
-            if (deleteDevice(upn, deviceId)) {
-                return true;
+        long currentWait = waitTimeBeforeEachDeleteAttempt;
+
+        for (int attemptsLeft = numDeleteAttemptsRemaining; attemptsLeft > 0; attemptsLeft--) {
+            System.out.printf(Locale.ENGLISH, "deleteDevice: attempt %d of %d for deviceId=%s%n",
+                    (numDeleteAttemptsRemaining - attemptsLeft + 1), numDeleteAttemptsRemaining, deviceId);
+
+            try {
+                if (deleteDevice(upn, deviceId)) {
+                    return true;
+                }
+                // API returned false (non-null but unrecognised response) - treat as transient and retry.
+                System.out.printf(Locale.ENGLISH,
+                        "deleteDevice: attempt did not confirm deletion, will retry if attempts remain.%n");
+            } catch (final LabApiException labApiException) {
+                System.out.printf(Locale.ENGLISH,
+                        "deleteDevice: attempt failed with error: %s%n", labApiException.getMessage());
+                if (attemptsLeft == 1) {
+                    // No more retries - surface the exception to the caller.
+                    throw labApiException;
+                }
             }
-        } catch (final LabApiException labApiException) {
-            // if not the last attempt, then just print the error to console
-            if (numDeleteAttemptsRemaining > 1) {
-                System.out.printf(
-                        Locale.ENGLISH,
-                        "Delete device attempt #%d%n failed: %s", (numDeleteAttemptsRemaining),
-                        labApiException
-                );
-            } else {
-                // last attempt, just throw the exception back
-                throw labApiException;
+
+            if (attemptsLeft > 1) {
+                // Add ±20% jitter to avoid thundering-herd when tests run in parallel.
+                final long jitter = (long) (currentWait * 0.2 * (Math.random() * 2 - 1));
+                final long sleepTime = Math.max(0, currentWait + jitter);
+                try {
+                    Thread.sleep(sleepTime);
+                } catch (final InterruptedException e) {
+                    // Restore the interrupted status so the calling thread can react properly.
+                    Thread.currentThread().interrupt();
+                    throw new LabApiException(LabError.FAILED_TO_DELETE_DEVICE, e,
+                            ": deleteDevice retry sleep interrupted");
+                }
+                // Exponential back-off: double the wait for the next iteration, capped at 30 seconds.
+                currentWait = Math.min(currentWait * 2, TimeUnit.SECONDS.toMillis(30));
             }
         }
 
-        try {
-            Thread.sleep(waitTimeBeforeEachDeleteAttempt);
-        } catch (final InterruptedException e) {
-            e.printStackTrace();
-        }
-
-        return deleteDevice(
-                upn,
-                deviceId,
-                numDeleteAttemptsRemaining - 1,
-                waitTimeBeforeEachDeleteAttempt * 2
-        );
-    }
-
-    private String getPassword(@NonNull final ConfigInfo configInfo) throws LabApiException {
-        return getPassword(configInfo.getLabInfo().getCredentialVaultKeyName());
+        // All attempts exhausted without success and without a terminal exception.
+        return false;
     }
 
     private String getPassword(@NonNull final TempUser tempUser) throws LabApiException {
@@ -400,10 +348,9 @@ public class LabClient implements ILabClient {
     private String getPassword(final String credentialVaultKeyName) throws LabApiException {
         final String secretName = getLabSecretName(credentialVaultKeyName);
 
-        // Adding a second attempt here, api sometimes fails to get the lab secret.
         try {
-            return getSecret(secretName);
-        } catch (final LabApiException e){
+            return getPasswordSecretFromLabsKeyVault(secretName);
+        } catch (final LabApiException e) {
             if (e.getErrorCode().equals(LabError.FAILED_TO_GET_SECRET_FROM_LAB)){
 
                 // Wait for a bit
@@ -414,7 +361,7 @@ public class LabClient implements ILabClient {
                 }
 
                 // Try to get the secret again
-                return getSecret(secretName);
+                return getPasswordSecretFromLabsKeyVault(secretName);
             } else {
                 throw e;
             }
@@ -423,6 +370,9 @@ public class LabClient implements ILabClient {
 
     @Override
     public boolean resetPassword(@NonNull final String upn) throws LabApiException {
+        Configuration.getDefaultApiClient().setAccessToken(
+                mLabApiAuthenticationClient.getAccessToken()
+        );
         final ResetApi resetApi = new ResetApi();
         try {
             final CustomSuccessResponse resetResponse = resetApi.apiResetPut(upn, ResetOperation.PASSWORD.toString());
@@ -494,6 +444,9 @@ public class LabClient implements ILabClient {
      * @return boolean value indicating policy enabled or not.
      */
     public boolean enablePolicy(@NonNull final String upn, @NonNull final ProtectionPolicy policy) throws LabApiException {
+        Configuration.getDefaultApiClient().setAccessToken(
+                mLabApiAuthenticationClient.getAccessToken()
+        );
         final EnablePolicyApi enablePolicyApi = new EnablePolicyApi();
         try {
             final CustomSuccessResponse enablePolicyResult = enablePolicyApi.apiEnablePolicyPut(upn, policy.toString());
@@ -516,6 +469,9 @@ public class LabClient implements ILabClient {
      * @return boolean value indicating policy is disabled or not for the upn.
      */
     public boolean disablePolicy(@NonNull final String upn, @NonNull final ProtectionPolicy policy) throws LabApiException {
+        Configuration.getDefaultApiClient().setAccessToken(
+                mLabApiAuthenticationClient.getAccessToken()
+        );
         final DisablePolicyApi disablePolicyApi = new DisablePolicyApi();
         try {
             final CustomSuccessResponse disablePolicyResponse = disablePolicyApi.apiDisablePolicyPut(upn, policy.toString());

@@ -23,9 +23,11 @@
 package com.microsoft.identity.labapi.utilities.client;
 
 import com.microsoft.identity.labapi.utilities.constants.TempUserType;
+import com.microsoft.identity.labapi.utilities.constants.UserType;
 import com.microsoft.identity.labapi.utilities.exception.LabApiException;
 
 import java.util.List;
+import java.util.Map;
 
 import lombok.NonNull;
 
@@ -33,33 +35,6 @@ import lombok.NonNull;
  * An interface describing the operations that need to be performed by a Lab Api Client.
  */
 public interface ILabClient {
-
-    /**
-     * Load an existing account from Lab Api based on the provided query.
-     *
-     * @param labQuery parameters that determine what kind of account to fetch from lab
-     * @return a {@link LabAccount} object
-     * @throws LabApiException if an error occurs while trying to fetch account from lab
-     */
-    ILabAccount getLabAccount(LabQuery labQuery) throws LabApiException;
-
-    /**
-     * Load an existing account from Lab Api based on the upn given.
-     *
-     * @param upn upn of the desired lab account
-     * @return a {@link LabAccount} object
-     * @throws LabApiException if an error occurs while trying to fetch account from lab
-     */
-    ILabAccount getLabAccount(@NonNull final String upn) throws LabApiException;
-
-    /**
-     * Loads existing account(s) from Lab Api based on the provided query.
-     *
-     * @param labQuery parameters that determine what kind of account(s) to fetch from lab
-     * @return a list of {@link LabAccount} objects
-     * @throws LabApiException if an error occurs while trying to fetch account(s) from lab
-     */
-    List<ILabAccount> getLabAccounts(LabQuery labQuery) throws LabApiException;
 
     /**
      * Create and return a new temp AAD user using Lab Api.
@@ -71,32 +46,30 @@ public interface ILabClient {
     ILabAccount createTempAccount(TempUserType tempUserType) throws LabApiException;
 
     /**
-     * Loads guest account from Lab Api based on the provided query.
-     *
-     * @param labQuery parameters that determine what kind of guest account to fetch
-     * @return a {@link LabGuestAccount} object
-     * @throws LabApiException if an error occurs while trying to fetch guest account from lab
-     */
-    LabGuestAccount loadGuestAccountFromLab(final LabQuery labQuery) throws LabApiException;
-
-    /**
-     * Get the password for a guest account.
-     *
-     * @param guestUser the guest account to be fetched from
-     * @return a String containing the password for the guest account
-     * @throws LabApiException if an error occurs while trying to fetch the password
-     */
-    String getPasswordForGuestUser(final LabGuestAccount guestUser) throws LabApiException;
-
-    /**
-     * Get the value of a secret from Lab Api. This primarily includes secrets like passwords for
-     * accounts but may also be used for any other secret that the Lab has stored in their KeyVault.
+     * Get a secret from the MSIDLABS KeyVault
      *
      * @param secretName the name (identifier) of the secret that should be loaded
      * @return a String containing the value of the secret
      * @throws LabApiException if an error occurs while trying to load secret from lab
      */
-    String getSecret(String secretName) throws LabApiException;
+    String getPasswordSecretFromLabsKeyVault(String secretName) throws LabApiException;
+
+    /**
+     * Get the account UPN JSON from the Mobile Build Key Vault.
+     *
+     * @return a Map containing the account information entries
+     * @throws LabApiException if an error occurs while trying to load the UPN JSON string
+     */
+    Map<String, LabJsonStringAccountEntry> getAccountMapJsonFromMobileBuildKeyVault() throws LabApiException;
+
+    /**
+     * Get the account from the Mobile Build Key Vault based on the user type.
+     *
+     * @param userType the user type (key) of the desired account
+     * @return a {@link LabAccount} object
+     * @throws LabApiException if an error occurs while trying to load the account
+     */
+    ILabAccount getAccountFromLabJsonStringInMobileBuildVault(UserType userType) throws LabApiException;
 
     /**
      * Reset the password for the username given, then reset it back to the original password.

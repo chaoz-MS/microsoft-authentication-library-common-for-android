@@ -286,8 +286,20 @@ public final class ErrorStrings {
     /**
      * Strong Device registration not enabled.
      */
-    public static final String STRONG_DEVICE_REGISTRATION_NOT_ENABLED_ERROR_CODE = "Strong_device_registration_not_enabled";
-    public static final String STRONG_DEVICE_REGISTRATION_NOT_ENABLED_ERROR_MESSAGE = "Strong device registration required, but is not yet enabled in broker";
+    public static final String STRONG_DEVICE_REGISTRATION_NOT_ENABLED_ERROR_CODE = "strong_device_registration_not_enabled";
+    public static final String STRONG_DEVICE_REGISTRATION_NOT_ENABLED_ERROR_MESSAGE = "Strong device registration required, but is not yet enabled in broker. Please contact your administrator for more information. Learn more here https://go.microsoft.com/fwlink/?linkid=2280772";
+
+    /**
+     * Device registration upgrade not supported in shared device.
+     */
+    public static final String DEVICE_REGISTRATION_UPGRADE_NOT_SUPPORTED_IN_SHARED_DEVICE_ERROR_CODE = "device_registration_upgrade_not_supported_in_shared_device";
+    public static final String DEVICE_REGISTRATION_UPGRADE_NOT_SUPPORTED_IN_SHARED_DEVICE_ERROR_MESSAGE = "Token Binding CA policy is not supported in shared device. Please contact your administrator for more information. Learn more here https://go.microsoft.com/fwlink/?linkid=2280772";
+
+    /**
+     * Device registration upgrade not supported due to user mismatch.
+     */
+    public static final String DEVICE_REGISTRATION_UPGRADE_NOT_SUPPORTED_USER_MISMATCH_ERROR_CODE = "device_registration_upgrade_not_supported_user_mismatch";
+    public static final String DEVICE_REGISTRATION_UPGRADE_NOT_SUPPORTED_USER_MISMATCH_ERROR_MESSAGE = "The currently signed in user is not a registered owner for this device. Please contact your administrator for more information. Learn more here https://go.microsoft.com/fwlink/?linkid=2280772";
 
     /**
      * Device unregistration/leave failed.
@@ -471,7 +483,93 @@ public final class ErrorStrings {
     public static final String ACTIVITY_NOT_FOUND = "activity_not_found";
 
     /**
+     * All web app sign out attempts failed.
+     */
+    public static final String ALL_WEBAPP_SIGN_OUTS_FAILED = "all_webapp_sign_outs_failed";
+
+    /**
+     * A specific web app error for Edge.
+     */
+    public static final String UI_NOT_ALLOWED = "ui_not_allowed";
+
+    /**
+     * The requested feature flight is disabled.
+     */
+    public static final String FLIGHT_DISABLED = "flight_disabled";
+
+    /**
      * A generic error code used when no other error code is applicable.
      */
     public static final String UNEXPECTED_ERROR = "unexpected_error";
+
+    /**
+     * The operation is only allowed for Broker applications.
+     */
+    public static final String BROKER_ONLY_OPERATION = "broker_only_operation";
+
+    /**
+     * More than one app is registered to handle the custom URL scheme used for the redirect URI
+     * of BrowserTabActivity. Only the current application should be listening on this scheme.
+     */
+    public static final String MULTIPLE_APPS_LISTENING_CUSTOM_URL_SCHEME = "multiple_apps_listening_url_scheme";
+
+    /**
+     * Switch browser flow: no browser launch strategy is available to handle the request.
+     */
+    public static final String SWITCH_BROWSER_NO_LAUNCH_STRATEGY = "no_launch_strategy";
+
+    /**
+     * Switch browser flow: a new browser switch request was received while one is already in progress.
+     */
+    public static final String SWITCH_BROWSER_ALREADY_IN_PROGRESS = "already_in_progress";
+
+    /**
+     * Switch browser flow: an intent was received that does not match any expected pattern.
+     */
+    public static final String SWITCH_BROWSER_UNEXPECTED_INTENT = "unexpected_intent";
+
+    /**
+     * Auth Tab flow: PROCESS_URI is missing from the intent extras.
+     */
+    public static final String AUTH_TAB_PROCESS_URI_MISSING = "PROCESS_URI is required to launch Auth Tab";
+
+    /**
+     * Auth Tab flow: BROKER_REDIRECT_URI is missing from the intent extras.
+     */
+    public static final String AUTH_TAB_REDIRECT_URI_MISSING = "BROKER_REDIRECT_URI is required to launch Auth Tab";
+
+    /**
+     * Auth Tab flow: BROWSER_PACKAGE_NAME is missing from the intent extras.
+     */
+    public static final String AUTH_TAB_BROWSER_PACKAGE_MISSING = "BROWSER_PACKAGE_NAME is required to launch Auth Tab";
+
+    /**
+     * Auth Tab result code: the user cancelled authentication.
+     */
+    public static final String AUTH_TAB_CANCELED = "CANCELED";
+
+    /**
+     * Auth Tab result message: the user cancelled authentication.
+     */
+    public static final String AUTH_TAB_CANCELED_MESSAGE = "User cancelled authentication by returning from browser";
+
+    /**
+     * Auth Tab result code: browser redirect verification failed.
+     */
+    public static final String AUTH_TAB_VERIFICATION_FAILED = "VERIFICATION_FAILED";
+
+    /**
+     * Auth Tab result message: browser redirect verification failed.
+     */
+    public static final String AUTH_TAB_VERIFICATION_FAILED_MESSAGE = "Failed to verify the authenticity of the browser redirect";
+
+    /**
+     * Auth Tab result code: browser redirect verification timed out.
+     */
+    public static final String AUTH_TAB_VERIFICATION_TIMED_OUT = "VERIFICATION_TIMED_OUT";
+
+    /**
+     * Auth Tab result message: browser redirect verification timed out.
+     */
+    public static final String AUTH_TAB_VERIFICATION_TIMED_OUT_MESSAGE = "Timed out while waiting for browser redirect verification";
 }

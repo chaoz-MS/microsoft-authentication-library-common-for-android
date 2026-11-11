@@ -23,11 +23,21 @@
 package com.microsoft.identity.common.java.result;
 
 import com.microsoft.identity.common.java.WarningType;
+import com.microsoft.identity.common.java.broker.IBrokerInfoProvider;
 import com.microsoft.identity.common.java.providers.oauth2.TokenResult;
 import com.microsoft.identity.common.java.providers.oauth2.AuthorizationResult;
-import com.microsoft.identity.common.java.result.ILocalAuthenticationResult;
+import com.microsoft.identity.common.java.broker.BrokerPerformanceMetrics;
+import com.microsoft.identity.common.java.broker.IBrokerPerformanceMetricsProvider;
+import com.microsoft.identity.common.java.broker.telemetry.IBrokerIpcTelemetryProvider;
+import com.microsoft.identity.common.java.broker.telemetry.BrokerIpcTelemetry;
+import com.microsoft.identity.common.java.providers.microsoft.microsoftsts.MicrosoftStsAuthorizationResult;
+import com.microsoft.identity.common.java.telemetry.ClientDataInfo;
 
-public class AcquireTokenResult {
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
+import javax.annotation.Nullable;
+
+public class AcquireTokenResult implements IBrokerPerformanceMetricsProvider, IBrokerInfoProvider, IBrokerIpcTelemetryProvider {
 
     private ILocalAuthenticationResult mLocalAuthenticationResult;
     private TokenResult mTokenResult;
@@ -36,6 +46,35 @@ public class AcquireTokenResult {
     private AuthorizationResult mAuthorizationResult;
 
     private Boolean mSucceeded = false;
+
+    @Nullable
+    private String mBrokerAppVersion;
+
+    @Nullable
+    private String mBrokerAppPackageName;
+
+    @Nullable
+    private String mPowerOptimizationSettings;
+
+    private BrokerPerformanceMetrics mBrokerPerformanceMetrics;
+
+    @Nullable
+    private BrokerIpcTelemetry mBrokerIpcTelemetry;
+
+    /**
+     * Populated onboarding telemetry blob JSON returned by the broker.
+     */
+    @Nullable
+    private String mOnboardingBlob;
+
+    public void setOnboardingBlob(@Nullable final String onboardingBlob) {
+        this.mOnboardingBlob = onboardingBlob;
+    }
+
+    @Nullable
+    public String getOnboardingBlob() {
+        return this.mOnboardingBlob;
+    }
 
     public void setLocalAuthenticationResult(ILocalAuthenticationResult result) {
         this.mLocalAuthenticationResult = result;
@@ -54,6 +93,29 @@ public class AcquireTokenResult {
         this.mTokenResult = tokenResult;
     }
 
+    public void setBrokerPerformanceMetrics(BrokerPerformanceMetrics brokerPerformanceMetrics) {
+        this.mBrokerPerformanceMetrics = brokerPerformanceMetrics;
+    }
+
+    @Override
+    public BrokerPerformanceMetrics getBrokerPerformanceMetrics() {
+        return this.mBrokerPerformanceMetrics;
+    }
+
+    @Override
+    @SuppressFBWarnings(
+            value = "NP_METHOD_PARAMETER_TIGHTENS_ANNOTATION",
+            justification = "The nullable Kotlin property and Java annotation express the same contract.")
+    public void setBrokerIpcTelemetry(@Nullable final BrokerIpcTelemetry brokerIpcTelemetry) {
+        this.mBrokerIpcTelemetry = brokerIpcTelemetry;
+    }
+
+    @Override
+    @Nullable
+    public BrokerIpcTelemetry getBrokerIpcTelemetry() {
+        return this.mBrokerIpcTelemetry;
+    }
+
     // Suppressing rawtype warnings due to the generic type AuthorizationResult
     @SuppressWarnings(WarningType.rawtype_warning)
     public AuthorizationResult getAuthorizationResult() {
@@ -68,4 +130,69 @@ public class AcquireTokenResult {
         return mSucceeded;
     }
 
+    public void setBrokerAppVersion(final String brokerVersion) {
+        this.mBrokerAppVersion = brokerVersion;
+    }
+
+    public void setBrokerAppPackageName(final String brokerPackageName) {
+        this.mBrokerAppPackageName = brokerPackageName;
+    }
+
+    public void setPowerOptimizationSettings(@Nullable final String powerOptimizationSettings) {
+        this.mPowerOptimizationSettings = powerOptimizationSettings;
+    }
+
+    @Override
+    public String getBrokerAppVersion() {
+        return mBrokerAppVersion;
+    }
+
+    @Override
+    public String getBrokerAppPackageName() {
+        return mBrokerAppPackageName;
+    }
+
+    /**
+     * @return The battery optimization status reported by the Broker that executed the request:
+     * {@code EXEMPT}, {@code NOT_EXEMPT}, or {@code UNKNOWN}; {@code null} when the Broker does
+     * not provide the status.
+     */
+    @Nullable
+    public String getPowerOptimizationSettings() {
+        return mPowerOptimizationSettings;
+    }
+
+    /**
+     * Gets the {@link ClientDataInfo} containing server-side telemetry data from the
+     * x-ms-clientdata response header (/token) or clientdata redirect query parameter (/authorize).
+     *
+     * <p>Resolution order:
+     * <ol>
+     *   <li>{@link LocalAuthenticationResult} — authoritative on success paths; the only carrier
+     *       that survives the broker IPC boundary.</li>
+     *   <li>{@link TokenResult} — fallback for paths where token call succeeded but no
+     *       {@code LocalAuthenticationResult} was constructed (e.g., error responses).</li>
+     *   <li>{@link MicrosoftStsAuthorizationResult} — fallback for failures before the
+     *       /token call (e.g., authorize-step errors).</li>
+     * </ol>
+     *
+     * @return The ClientDataInfo, or null if not available from any source.
+     */
+    @Nullable
+    public ClientDataInfo getClientDataInfo() {
+        if (mLocalAuthenticationResult instanceof LocalAuthenticationResult) {
+            final ClientDataInfo fromLocalAuth =
+                    ((LocalAuthenticationResult) mLocalAuthenticationResult).getClientDataInfo();
+            if (fromLocalAuth != null) {
+                return fromLocalAuth;
+            }
+        }
+        if (mTokenResult != null && mTokenResult.getClientDataInfo() != null) {
+            return mTokenResult.getClientDataInfo();
+        }
+        if (mAuthorizationResult instanceof MicrosoftStsAuthorizationResult) {
+            return ((MicrosoftStsAuthorizationResult) mAuthorizationResult).getClientDataInfo();
+        }
+        return null;
+    }
 }

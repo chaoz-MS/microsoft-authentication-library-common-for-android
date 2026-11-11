@@ -22,12 +22,10 @@
 //  THE SOFTWARE.
 package com.microsoft.identity.common.java.nativeauth.providers
 
-import com.microsoft.identity.common.java.AuthenticationConstants
-import com.microsoft.identity.common.java.eststelemetry.EstsTelemetry
-import com.microsoft.identity.common.java.logging.LibraryInfoHelper
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.ResetPasswordStartCommandParameters
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.ResetPasswordSubmitCodeCommandParameters
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.ResetPasswordSubmitNewPasswordCommandParameters
+import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignInStartCommandParameters
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignInSubmitCodeCommandParameters
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignInSubmitPasswordCommandParameters
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignInWithContinuationTokenCommandParameters
@@ -35,11 +33,9 @@ import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignUpS
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignUpSubmitCodeCommandParameters
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignUpSubmitPasswordCommandParameters
 import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignUpSubmitUserAttributesCommandParameters
-import com.microsoft.identity.common.java.nativeauth.commands.parameters.SignInStartCommandParameters
 import com.microsoft.identity.common.java.nativeauth.providers.requests.jit.JITChallengeRequest
 import com.microsoft.identity.common.java.nativeauth.providers.requests.jit.JITContinueRequest
 import com.microsoft.identity.common.java.nativeauth.providers.requests.jit.JITIntrospectRequest
-import com.microsoft.identity.common.java.net.HttpConstants
 import com.microsoft.identity.common.java.nativeauth.providers.requests.resetpassword.ResetPasswordChallengeRequest
 import com.microsoft.identity.common.java.nativeauth.providers.requests.resetpassword.ResetPasswordContinueRequest
 import com.microsoft.identity.common.java.nativeauth.providers.requests.resetpassword.ResetPasswordPollCompletionRequest
@@ -52,8 +48,7 @@ import com.microsoft.identity.common.java.nativeauth.providers.requests.signin.S
 import com.microsoft.identity.common.java.nativeauth.providers.requests.signup.SignUpChallengeRequest
 import com.microsoft.identity.common.java.nativeauth.providers.requests.signup.SignUpContinueRequest
 import com.microsoft.identity.common.java.nativeauth.providers.requests.signup.SignUpStartRequest
-import com.microsoft.identity.common.java.platform.Device
-import java.util.TreeMap
+import com.microsoft.identity.common.java.net.HttpConstants
 
 /**
  * NativeAuthRequestProvider creates request objects that encapsulate all information required
@@ -170,7 +165,8 @@ class NativeAuthRequestProvider(private val config: NativeAuthOAuth2Configuratio
             challengeType = config.challengeType,
             requestUrl = signInTokenEndpoint,
             headers = getRequestHeaders(commandParameters.getCorrelationId()),
-            claimsRequestJson = commandParameters.claimsRequestJson
+            claimsRequestJson = commandParameters.claimsRequestJson,
+            isMFAGrantType = commandParameters.isMFAGrantType
         )
     }
 
@@ -412,15 +408,8 @@ class NativeAuthRequestProvider(private val config: NativeAuthOAuth2Configuratio
 
     //region helpers
     private fun getRequestHeaders(correlationId: String): Map<String, String?> {
-        val headers: MutableMap<String, String?> = TreeMap()
-        if (correlationId != "UNSET") {
-            headers[AuthenticationConstants.AAD.CLIENT_REQUEST_ID] = correlationId
-        }
-        headers[AuthenticationConstants.SdkPlatformFields.PRODUCT] = LibraryInfoHelper.getLibraryName()
-        headers[AuthenticationConstants.SdkPlatformFields.VERSION] = LibraryInfoHelper.getLibraryVersion()
-        headers.putAll(Device.getPlatformIdParameters())
-        headers.putAll(EstsTelemetry.getInstance().telemetryHeaders)
-        headers[HttpConstants.HeaderField.CONTENT_TYPE] = "application/x-www-form-urlencoded"
+        val headers = NativeAuthSdkHeaders.base(correlationId)
+        headers[HttpConstants.HeaderField.CONTENT_TYPE] = NativeAuthContentType.FORM_URL_ENCODED.value
         return headers
     }
     //endregion

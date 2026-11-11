@@ -32,6 +32,8 @@ import com.microsoft.identity.common.java.nativeauth.providers.NativeAuthConstan
 import com.microsoft.identity.common.java.nativeauth.providers.NativeAuthOAuth2Configuration
 import com.microsoft.identity.common.java.nativeauth.providers.NativeAuthOAuth2Strategy
 import com.microsoft.identity.common.java.nativeauth.providers.NativeAuthOAuth2StrategyFactory
+import com.microsoft.identity.common.java.nativeauth.providers.NativeAuthV2OAuth2Strategy
+import com.microsoft.identity.common.java.providers.oauth2.OAuth2RequestInterceptor
 import com.microsoft.identity.common.java.providers.oauth2.OAuth2StrategyParameters
 
 /**
@@ -76,7 +78,7 @@ class NativeAuthCIAMAuthority (
         mAuthorityUrlString = authorityUrl
     }
 
-    private fun createNativeAuthOAuth2Configuration(challengeTypes: List<String>?, capabilities: List<String>?): NativeAuthOAuth2Configuration {
+    private fun createNativeAuthOAuth2Configuration(challengeTypes: List<String>?, capabilities: List<String>?, requestInterceptor: OAuth2RequestInterceptor?): NativeAuthOAuth2Configuration {
        LogSession.logMethodCall(
            tag = TAG,
            correlationId = null,
@@ -86,7 +88,8 @@ class NativeAuthCIAMAuthority (
             authorityUrl = this.authorityURL,
             clientId = this.clientId,
             challengeType = getChallengeTypesWithDefault(challengeTypes),
-            capabilities = getCapabilities(capabilities)
+            capabilities = getCapabilities(capabilities),
+            requestInterceptor = requestInterceptor
         )
     }
 
@@ -123,12 +126,34 @@ class NativeAuthCIAMAuthority (
 
     @Throws(ClientException::class)
     override fun createOAuth2Strategy(parameters: OAuth2StrategyParameters): NativeAuthOAuth2Strategy {
-        val config = createNativeAuthOAuth2Configuration(parameters.mChallengeTypes, parameters.mCapabilities)
+        val config = createNativeAuthOAuth2Configuration(
+            parameters.mChallengeTypes,
+            parameters.mCapabilities,
+            parameters.mRequestInterceptor
+        )
 
         // CIAM Authorities can fetch endpoints from open id configuration. We disable this option.
         parameters.setUsingOpenIdConfiguration(NATIVE_AUTH_USE_OPENID_CONFIGURATION)
 
         return NativeAuthOAuth2StrategyFactory.createStrategy(
+            config = config,
+            strategyParameters = parameters,
+        )
+    }
+
+    /**
+     * Creates the OAuth2 strategy used by Native Authentication V2 callers.
+     */
+    fun createOAuth2StrategyV2(parameters: OAuth2StrategyParameters): NativeAuthV2OAuth2Strategy {
+        val config = createNativeAuthOAuth2Configuration(
+            parameters.mChallengeTypes,
+            parameters.mCapabilities,
+            parameters.mRequestInterceptor
+        )
+
+        parameters.setUsingOpenIdConfiguration(NATIVE_AUTH_USE_OPENID_CONFIGURATION)
+
+        return NativeAuthOAuth2StrategyFactory.createV2Strategy(
             config = config,
             strategyParameters = parameters,
         )

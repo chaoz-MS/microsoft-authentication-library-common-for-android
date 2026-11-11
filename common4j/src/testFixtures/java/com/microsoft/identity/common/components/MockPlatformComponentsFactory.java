@@ -151,6 +151,15 @@ public class MockPlatformComponentsFactory {
             throw new UnsupportedOperationException();
         }
 
+        @Override
+        public boolean isValidCallingApp(@NonNull String redirectUri, @NonNull String packageName, int callingUid) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void isValidCallingAppForWebApps(int callingUid) throws UnsupportedOperationException {
+            throw new UnsupportedOperationException();
+        }
         @Nullable
         @Override
         public String getEnrollmentId(@NonNull String userId, @NonNull String packageName) {
@@ -187,6 +196,11 @@ public class MockPlatformComponentsFactory {
         @Override
         public List<Map.Entry<String, String>> updateWithAndGetPlatformSpecificExtraQueryParameters(@Nullable List<Map.Entry<String, String>> originalList) {
             return originalList;
+        }
+
+        @Override
+        public boolean isBrokerProcess() {
+            throw new UnsupportedOperationException();
         }
     };
 

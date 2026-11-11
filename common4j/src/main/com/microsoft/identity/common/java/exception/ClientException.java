@@ -49,6 +49,11 @@ public class ClientException extends BaseException {
     public static final String TOKEN_CACHE_ITEM_NOT_FOUND = "token_cache_item_not_found";
 
     /**
+     * Indicates that saving tokens did not produce the cache record required for the result.
+     */
+    public static final String TOKEN_CACHE_SAVE_FAILED = "token_cache_save_failed";
+
+    /**
      * Deserialization error loading the token shared library item.
      */
     public static final String TOKEN_SHARING_DESERIALIZATION_ERROR = "token_sharing_deserialization_error";
@@ -132,6 +137,16 @@ public class ClientException extends BaseException {
      * The encoding is not supported by the device.
      */
     public static final String UNSUPPORTED_ENCODING = "unsupported_encoding";
+
+    /**
+     * The operation is not supported.
+     */
+    public static final String UNSUPPORTED_OPERATION = "unsupported_operation";
+
+    /**
+     * The request is already in progress.
+     */
+    public static final String REQUEST_IN_PROGRESS = "request_in_progress";
 
     /**
      * The designated crypto alg is not supported.
@@ -442,6 +457,32 @@ public class ClientException extends BaseException {
     public static final String TIMED_OUT = "timed_out";
 
     /**
+     * Timeout occurred while waiting to acquire a synchronization lock.
+     * Indicates high lock contention - many operations competing for the same lock.
+     */
+    public static final String TIMED_OUT_LOCK_CONTENTION = "timed_out_lock_contention";
+
+    /**
+     * Timeout occurred while waiting for an available worker thread.
+     * All thread pool threads are busy AND requests are queued.
+     * Indicates severe thread pool saturation.
+     */
+    public static final String TIMED_OUT_THREAD_POOL_SATURATED = "timed_out_thread_pool_saturated";
+
+    /**
+     * Timeout occurred while waiting for thread pool resources.
+     * Threads are busy but pool is not fully saturated.
+     * Indicates moderate thread pool contention.
+     */
+    public static final String TIMED_OUT_THREAD_POOL_CONTENTION = "timed_out_thread_pool_contention";
+
+    /**
+     * Timeout occurred during operation execution (network, processing, etc.).
+     * Operation was started but didn't complete within the allowed time.
+     */
+    public static final String TIMED_OUT_EXECUTION = "timed_out_execution";
+
+    /**
      * A NullPointerException was thrown.
      */
     public static final String NULL_POINTER_ERROR = "null_pointer_error";
@@ -500,6 +541,11 @@ public class ClientException extends BaseException {
      * The device doesn't support hardware wrapped key import.
      */
     public static final String DEVICE_NOT_SUPPORT_HARDWARE_WRAPPED_KEY_IMPORT = "device_not_supported_hardware_wrapped_key_import";
+
+    /**
+     * Emitted when a function that must not run on the main (UI) thread is called from the main thread.
+     */
+    public static final String CALLED_ON_MAIN_THREAD = "called_on_main_thread";
 
     /**
      * Constructor of ClientException.
