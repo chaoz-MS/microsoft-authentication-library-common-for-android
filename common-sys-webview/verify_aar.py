@@ -115,6 +115,13 @@ def verify(base_path, legacy_path, system_path):
     require(
         SYSTEM_LAYOUT in system, 'Missing isolated system authentication layout'
     )
+    for name, data in legacy.items():
+        if (name.startswith('res/') and not name.endswith('/')
+                and name != AUTH_LAYOUT):
+            require(
+                name in system and system[name] == data,
+                f'Shared UI resource differs or is missing: {name}',
+            )
     require(
         b'<WebView' in system[SYSTEM_LAYOUT]
         and b'EdgeOneAuthWebView' not in system[SYSTEM_LAYOUT],

@@ -11,6 +11,9 @@ The module compiles the existing UI sources in
 global initialization, cache, storage, broker state, and `common4j` types.
 The authentication layout has its own name and uses `android.webkit.WebView`;
 unchanged resources remain shared with the legacy UI.
+The consumer must merge this AAR as a resource overlay when both UI variants
+are present. The verifier requires every shared legacy resource to be present
+and byte-identical, so an overlay cannot silently select a divergent UI value.
 
 `platform/` contains the unmodified system WebView passkey transport and its
 JavaScript asset from upstream release 24.7.0, commit
@@ -47,12 +50,6 @@ To produce the new artifact's local Maven publication and source archive:
 Repository credentials belong in the user's Gradle configuration or the
 documented environment variables, never in this checkout. Remote publication
 and downstream ingestion require the normal package review and release process.
-The existing `display-mask:0.3.0` dependency is resolved only from the public
-Microsoft Duo SDK feed documented in the
-[MSAL setup guide](https://learn.microsoft.com/en-us/entra/identity-platform/tutorial-mobile-app-android-prepare-app).
-It does not require private feed credentials or a replacement API stub.
-The published 0.3.0 artifact itself contains platform API stubs; resolving it
-from the official feed does not establish Surface Duo runtime coverage.
 
 This module replaces downstream common UI extraction and namespace rewriting,
 not OneAuth's provider routing, activity lifecycle, MAM, storage, or proxy

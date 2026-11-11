@@ -150,6 +150,25 @@ class VerifyAarTest(unittest.TestCase):
         ):
             self.verify()
 
+    def test_identical_shared_resource(self):
+        name = 'res/values/values.xml'
+        self.legacy[name] = self.system[name] = (
+            b'<resources><string name="app_loading">Loading</string></resources>'
+        )
+        self.verify()
+
+    def test_changed_shared_resource(self):
+        name = 'res/values/values.xml'
+        self.legacy[name] = b'<resources/>'
+        self.system[name] = b'<resources><string name="extra">X</string></resources>'
+        with self.assertRaisesRegex(ValueError, 'Shared UI resource differs'):
+            self.verify()
+
+    def test_missing_shared_resource(self):
+        self.legacy['res/values/values.xml'] = b'<resources/>'
+        with self.assertRaisesRegex(ValueError, 'Shared UI resource differs'):
+            self.verify()
+
     def test_non_platform_webview(self):
         self.system[verifier.SYSTEM_LAYOUT] = b'<EdgeOneAuthWebView/>'
         with self.assertRaisesRegex(ValueError, 'platform WebView'):
