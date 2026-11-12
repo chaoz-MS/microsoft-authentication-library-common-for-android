@@ -216,7 +216,8 @@ android {
 }
 
 dependencies {
-    api project(':common')
+    localApi project(':common')
+    distApi "com.microsoft.identity:common:25.0.0"
     testImplementation project(path: ':testutils')
 
     localApi(project(":common4j")) {
