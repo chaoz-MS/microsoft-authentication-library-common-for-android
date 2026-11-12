@@ -38,6 +38,10 @@ and overrides only legacy UI, task state and WebView-cookie handling. Its layout
 to use the host's `EdgeOneAuthWebView`; the host applies Edge WebView substitution only to
 the legacy dependency graph, never to stock common.
 
+The `local` flavor uses the stock `common` project; the `dist` flavor depends on
+the published `com.microsoft.identity:common:25.0.0` artifact. This keeps the extension's
+published dependency unambiguous without changing stock common's release/debug publications.
+
 Run `./gradlew :common-ext:verifyLegacyExtAar` to build both AARs and reject duplicate
 classes, resource overlays, shared manifest components or assets, and unscoped legacy
 consumer rules. Run `python3 -m unittest discover -s common-ext -p '*_test.py'` for the
