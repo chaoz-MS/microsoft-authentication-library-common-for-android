@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp" >
+
+    <EditText
+        android:id="@+id/edge_oneauth_legacy_pinEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="textPassword"
+        android:maxLines="1"
+        android:lines="1"
+        android:hint="@string/edge_oneauth_legacy_smartcard_pin_layout_edittext_hint"
+        android:backgroundTint="@color/edge_oneauth_legacy_dialogPinEditText"
+        android:textCursorDrawable="@drawable/edge_oneauth_legacy_cursor_color"
+        android:textAlignment="viewStart"
+        android:layout_gravity="start"
+        />
+    <TextView
+        android:id="@+id/edge_oneauth_legacy_errorTextView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/edge_oneauth_legacy_dialogErrorText"/>
+
+</LinearLayout>

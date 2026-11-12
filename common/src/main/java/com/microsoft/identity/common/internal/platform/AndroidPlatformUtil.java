@@ -46,6 +46,7 @@ import com.microsoft.identity.common.adal.internal.net.DefaultConnectionService;
 import com.microsoft.identity.common.internal.broker.BrokerData;
 import com.microsoft.identity.common.internal.broker.IntuneMAMEnrollmentIdGateway;
 import com.microsoft.identity.common.internal.broker.PackageHelper;
+import com.microsoft.identity.common.internal.ui.webview.WebViewUtil;
 import com.microsoft.identity.common.internal.util.ProcessUtil;
 import com.microsoft.identity.common.java.commands.ICommand;
 import com.microsoft.identity.common.java.commands.InteractiveTokenCommand;
@@ -122,7 +123,7 @@ public class AndroidPlatformUtil implements IPlatformUtil {
 
     @Override
     public void removeCookiesFromWebView() {
-        throw new UnsupportedOperationException("Use WebViewUtil instead");
+        WebViewUtil.removeCookiesFromWebView(mContext);
     }
 
     @Override

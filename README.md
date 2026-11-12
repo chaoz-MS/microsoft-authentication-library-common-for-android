@@ -22,3 +22,25 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 
 ### Android Studio Build Requirement
 Please note that this project uses [Lombok](https://projectlombok.org/) internally and while using Android Studio you will need to install [Lombok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) to get the project to build successfully within Android Studio.
+
+### Edge legacy WebView experiment
+
+`common` is the complete, unmodified 25.0.0 implementation, including its native Android
+WebView UI. It is the only owner of shared authentication state. It has no dependency on
+`common-ext`; `./gradlew :common:assembleDistRelease` builds the stock-only dependency graph.
+The `distCommon4jVersion` override is retained.
+
+`common-ext:25.0.0-legacy-webview.1` contains only the legacy Edge UI closure. Its classes
+are under `com.microsoft.identity.common.edgewebview`, its resources and assets use the
+`edge_oneauth_legacy_` prefix, and its manifest components and consumer rules are isolated.
+`AndroidPlatformComponentsFactoryExt` delegates shared initialization to the stock factory
+and overrides only legacy UI, task state and WebView-cookie handling. Its layout continues
+to use the host's `EdgeOneAuthWebView`; the host applies Edge WebView substitution only to
+the legacy dependency graph, never to stock common.
+
+Run `./gradlew :common-ext:verifyLegacyExtAar` to build both AARs and reject duplicate
+classes, resource overlays, shared manifest components or assets, and unscoped legacy
+consumer rules. Run `python3 -m unittest discover -s common-ext -p '*_test.py'` for the
+verifier regression tests. This is an experimental producer change, not an end-to-end
+validated release. Removing the experiment must remove the legacy host selection and
+dependency along with `common-ext`, without replacing or modifying stock `common`.

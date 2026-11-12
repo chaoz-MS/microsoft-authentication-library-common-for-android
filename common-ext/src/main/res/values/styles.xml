@@ -1,55 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Certificate AlertDialog Theme for Certificate Picker and PIN prompt -->
-    <style name="CertAlertDialogTheme" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="edge_oneauth_legacy_CertAlertDialogTheme" parent="Theme.AppCompat.Light.Dialog.Alert">
         <!-- everything -->
-        <item name="android:textColor">@color/dialogTitleText</item>
-        <item name="android:textColorPrimary">@color/dialogMessageText</item>
+        <item name="android:textColor">@color/edge_oneauth_legacy_dialogTitleText</item>
+        <item name="android:textColorPrimary">@color/edge_oneauth_legacy_dialogMessageText</item>
         <item name="textAllCaps">false</item>
         <!-- Title -->
         <item name="android:windowTitleSize">20sp</item>
         <!-- buttons -->
-        <item name="colorAccent">@color/dialogButtonText</item>
+        <item name="colorAccent">@color/edge_oneauth_legacy_dialogButtonText</item>
         <!-- PIN EditText -->
-        <item name="colorControlNormal">@color/dialogPinEditText</item>
-        <item name="colorControlActivated">@color/dialogPinEditText</item>
+        <item name="colorControlNormal">@color/edge_oneauth_legacy_dialogPinEditText</item>
+        <item name="colorControlActivated">@color/edge_oneauth_legacy_dialogPinEditText</item>
     </style>
 
     <!-- Certificate AlertDialog Theme for Errors (Too many PIN attempts) -->
-    <style name="ErrorAlertDialogTheme" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="edge_oneauth_legacy_ErrorAlertDialogTheme" parent="Theme.AppCompat.Light.Dialog.Alert">
         <!-- everything -->
-        <item name="android:textColor">@color/dialogTitleText</item>
-        <item name="android:textColorPrimary">@color/dialogErrorText</item>
+        <item name="android:textColor">@color/edge_oneauth_legacy_dialogTitleText</item>
+        <item name="android:textColorPrimary">@color/edge_oneauth_legacy_dialogErrorText</item>
         <item name="textAllCaps">false</item>
         <!-- Title -->
         <item name="android:windowTitleSize">20sp</item>
         <!-- buttons -->
-        <item name="colorAccent">@color/dialogButtonText</item>
+        <item name="colorAccent">@color/edge_oneauth_legacy_dialogButtonText</item>
     </style>
 
     <!-- Certificate AlertDialog Theme for User Choice Dialog -->
-    <style name="UserChoiceAlertDialogTheme" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="edge_oneauth_legacy_UserChoiceAlertDialogTheme" parent="Theme.AppCompat.Light.Dialog.Alert">
         <!-- everything -->
-        <item name="android:textColor">@color/dialogTitleText</item>
-        <item name="android:textColorPrimary">@color/dialogMessageTextSecondChoice</item>
+        <item name="android:textColor">@color/edge_oneauth_legacy_dialogTitleText</item>
+        <item name="android:textColorPrimary">@color/edge_oneauth_legacy_dialogMessageTextSecondChoice</item>
         <item name="textAllCaps">false</item>
         <!-- Title -->
         <item name="android:windowTitleSize">20sp</item>
         <!-- buttons -->
-        <item name="colorAccent">@color/dialogButtonText</item>
+        <item name="colorAccent">@color/edge_oneauth_legacy_dialogButtonText</item>
     </style>
 
     <!-- Certificate AlertDialog Theme for Title-Only Dialogs -->
-    <style name="TitleOnlyAlertDialogTheme" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="edge_oneauth_legacy_TitleOnlyAlertDialogTheme" parent="Theme.AppCompat.Light.Dialog.Alert">
         <!-- everything -->
-        <item name="android:textColor">@color/dialogTitleText</item>
+        <item name="android:textColor">@color/edge_oneauth_legacy_dialogTitleText</item>
         <item name="textAllCaps">false</item>
         <!-- Title -->
         <item name="android:windowTitleSize">20sp</item>
     </style>
 
     <!-- Transparent Activity Theme -->
-    <style name="TransparentActivityTheme" parent="Theme.AppCompat.NoActionBar">
+    <style name="edge_oneauth_legacy_TransparentActivityTheme" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowContentOverlay">@null</item>
@@ -64,51 +64,51 @@
         activity/task/window transition slot is suppressed (including across the :auth process
         boundary), making the return instantaneous.
     -->
-    <style name="OpenIdVcReturnActivityTheme" parent="@android:style/Theme.Translucent.NoTitleBar">
+    <style name="edge_oneauth_legacy_OpenIdVcReturnActivityTheme" parent="@android:style/Theme.Translucent.NoTitleBar">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:backgroundDimEnabled">false</item>
-        <item name="android:windowAnimationStyle">@style/BrokerNoWindowAnimation</item>
+        <item name="android:windowAnimationStyle">@style/edge_oneauth_legacy_BrokerNoWindowAnimation</item>
     </style>
 
     <!-- Theme for DualScreenActivity.
         Force set to a light theme (to status and navigation bars) since broker/common activities always have white background. -->
-    <style name="DualScreenActivityTheme" parent="Theme.AppCompat.Light">
-        <item name="android:windowBackground">@color/com_microsoft_identity_common_white</item>
+    <style name="edge_oneauth_legacy_DualScreenActivityTheme" parent="Theme.AppCompat.Light">
+        <item name="android:windowBackground">@color/edge_oneauth_legacy_com_microsoft_identity_common_white</item>
     </style>
 
     <!--
         Window animation style that suppresses every activity / task / window animation slot
-        by pointing it at an empty @anim/broker_no_animation set. WindowManager reads this
+        by pointing it at an empty @anim/edge_oneauth_legacy_broker_no_animation set. WindowManager reads this
         from the activity's theme in system_server, so it applies across the :auth process
         boundary and the predictive-back gesture in a way overridePendingTransition cannot.
     -->
-    <style name="BrokerNoWindowAnimation">
-        <item name="android:activityOpenEnterAnimation">@anim/broker_no_animation</item>
-        <item name="android:activityOpenExitAnimation">@anim/broker_no_animation</item>
-        <item name="android:activityCloseEnterAnimation">@anim/broker_no_animation</item>
-        <item name="android:activityCloseExitAnimation">@anim/broker_no_animation</item>
-        <item name="android:taskOpenEnterAnimation">@anim/broker_no_animation</item>
-        <item name="android:taskOpenExitAnimation">@anim/broker_no_animation</item>
-        <item name="android:taskCloseEnterAnimation">@anim/broker_no_animation</item>
-        <item name="android:taskCloseExitAnimation">@anim/broker_no_animation</item>
-        <item name="android:taskToFrontEnterAnimation">@anim/broker_no_animation</item>
-        <item name="android:taskToFrontExitAnimation">@anim/broker_no_animation</item>
-        <item name="android:taskToBackEnterAnimation">@anim/broker_no_animation</item>
-        <item name="android:taskToBackExitAnimation">@anim/broker_no_animation</item>
-        <item name="android:windowEnterAnimation">@anim/broker_no_animation</item>
-        <item name="android:windowExitAnimation">@anim/broker_no_animation</item>
+    <style name="edge_oneauth_legacy_BrokerNoWindowAnimation">
+        <item name="android:activityOpenEnterAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:activityOpenExitAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:activityCloseEnterAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:activityCloseExitAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:taskOpenEnterAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:taskOpenExitAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:taskCloseEnterAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:taskCloseExitAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:taskToFrontEnterAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:taskToFrontExitAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:taskToBackEnterAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:taskToBackExitAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:windowEnterAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
+        <item name="android:windowExitAnimation">@anim/edge_oneauth_legacy_broker_no_animation</item>
     </style>
 
     <!--
         Variant of DualScreenActivityTheme that suppresses activity transitions for
         BrokerAuthorizationActivity. See BrokerAuthorizationActivity#getThemeResId().
     -->
-    <style name="DualScreenBrokerAuthorizationActivityTheme" parent="DualScreenActivityTheme">
-        <item name="android:windowBackground">@color/com_microsoft_identity_common_white</item>
+    <style name="edge_oneauth_legacy_DualScreenBrokerAuthorizationActivityTheme" parent="edge_oneauth_legacy_DualScreenActivityTheme">
+        <item name="android:windowBackground">@color/edge_oneauth_legacy_com_microsoft_identity_common_white</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
-        <item name="android:windowAnimationStyle">@style/BrokerNoWindowAnimation</item>
+        <item name="android:windowAnimationStyle">@style/edge_oneauth_legacy_BrokerNoWindowAnimation</item>
     </style>
 </resources>
