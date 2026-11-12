@@ -1,72 +1,72 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
-    <string name="app_loading">Учитавање…</string>
+    <string name="edge_oneauth_legacy_app_loading">Учитавање…</string>
 
-    <string name="broker_processing">Посредник обрађује</string>
-    <string name="http_auth_dialog_username">Корисничко име</string>
-    <string name="http_auth_dialog_password">Лозинка</string>
-    <string name="http_auth_dialog_title">Унесите акредитиве</string>
-    <string name="http_auth_dialog_origin_host">Хост: %1$s</string>
-    <string name="http_auth_dialog_login">Пријављивање</string>
-    <string name="http_auth_dialog_cancel">Откажи</string>
+    <string name="edge_oneauth_legacy_broker_processing">Посредник обрађује</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_username">Корисничко име</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_password">Лозинка</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_title">Унесите акредитиве</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_origin_host">Хост: %1$s</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_login">Пријављивање</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_cancel">Откажи</string>
 
     <!-- strings for CBA dialogs and layouts -->
-    <string name="smartcard_cert_dialog_title">Изаберите цертификат за пријављивање</string>
-    <string name="smartcard_cert_dialog_positive_button">Настави</string>
-    <string name="smartcard_cert_dialog_negative_button">Откажи</string>
+    <string name="edge_oneauth_legacy_smartcard_cert_dialog_title">Изаберите цертификат за пријављивање</string>
+    <string name="edge_oneauth_legacy_smartcard_cert_dialog_positive_button">Настави</string>
+    <string name="edge_oneauth_legacy_smartcard_cert_dialog_negative_button">Откажи</string>
 
-    <string name="smartcard_pin_dialog_title">Откључајте паметну картицу</string>
-    <string name="smartcard_pin_dialog_message">Унесите PIN кôд паметне картице да бисте приступили цертификату и пријавили се</string>
-    <string name="smartcard_pin_dialog_positive_button">Откључај</string>
-    <string name="smartcard_pin_dialog_negative_button">Откажи</string>
-    <string name="smartcard_pin_dialog_error_message">PIN кôд који сте унели је нетачан</string>
-    <string name="smartcard_pin_layout_edittext_hint">PIN</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_title">Откључајте паметну картицу</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_message">Унесите PIN кôд паметне картице да бисте приступили цертификату и пријавили се</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_positive_button">Откључај</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_negative_button">Откажи</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_error_message">PIN кôд који сте унели је нетачан</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_layout_edittext_hint">PIN</string>
 
-    <string name="smartcard_error_dialog_positive_button">У реду</string>
+    <string name="edge_oneauth_legacy_smartcard_error_dialog_positive_button">У реду</string>
 
-    <string name="smartcard_max_attempt_dialog_title">Покушајте поново касније</string>
-    <string name="smartcard_max_attempt_dialog_message">Превише неуспелих покушаја, покушајте поново касније.</string>
+    <string name="edge_oneauth_legacy_smartcard_max_attempt_dialog_title">Покушајте поново касније</string>
+    <string name="edge_oneauth_legacy_smartcard_max_attempt_dialog_message">Превише неуспелих покушаја, покушајте поново касније.</string>
 
-    <string name="smartcard_early_unplug_dialog_title">Покушајте поново</string>
-    <string name="smartcard_early_unplug_dialog_message">Уређај паметне картице је уклоњен. Поново уметните уређај пре него што поново покушате да се пријавите.</string>
+    <string name="edge_oneauth_legacy_smartcard_early_unplug_dialog_title">Покушајте поново</string>
+    <string name="edge_oneauth_legacy_smartcard_early_unplug_dialog_message">Уређај паметне картице је уклоњен. Поново уметните уређај пре него што поново покушате да се пријавите.</string>
 
-    <string name="smartcard_no_cert_dialog_title">Нису пронађени важећи цертификати.</string>
-    <string name="smartcard_no_cert_dialog_message">Потврдите да је цертификат исправно обезбеђен на уређају паметне картице.</string>
+    <string name="edge_oneauth_legacy_smartcard_no_cert_dialog_title">Нису пронађени важећи цертификати.</string>
+    <string name="edge_oneauth_legacy_smartcard_no_cert_dialog_message">Потврдите да је цертификат исправно обезбеђен на уређају паметне картице.</string>
 
-    <string name="smartcard_nfc_diff_connected_title">Можете да користите само једну по једну паметну картицу</string>
-    <string name="smartcard_nfc_diff_connected_message">Користите паметну картицу помоћу које сте се првобитно пријавили.</string>
-    <string name="smartcard_nfc_diff_connected_positive_button">Разумем</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_diff_connected_title">Можете да користите само једну по једну паметну картицу</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_diff_connected_message">Користите паметну картицу помоћу које сте се првобитно пријавили.</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_diff_connected_positive_button">Разумем</string>
 
-    <string name="smartcard_general_error_dialog_title">Покушајте поново касније</string>
-    <string name="smartcard_general_error_dialog_message">Дошло је до неочекиване грешке. Покушајте поново касније.</string>
+    <string name="edge_oneauth_legacy_smartcard_general_error_dialog_title">Покушајте поново касније</string>
+    <string name="edge_oneauth_legacy_smartcard_general_error_dialog_message">Дошло је до неочекиване грешке. Покушајте поново касније.</string>
 
-    <string name="user_choice_dialog_title">Како желите да се пријавите?</string>
-    <string name="user_choice_dialog_on_device_name">Цертификат на овом уређају</string>
-    <string name="user_choice_dialog_smartcard_name">Физичка паметна картица</string>
-    <string name="user_choice_dialog_positive_button">Настави</string>
-    <string name="user_choice_dialog_negative_button">Откажи</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_title">Како желите да се пријавите?</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_on_device_name">Цертификат на овом уређају</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_smartcard_name">Физичка паметна картица</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_positive_button">Настави</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_negative_button">Откажи</string>
 
-    <string name="smartcard_prompt_dialog_title">Припремите паметну картицу</string>
-    <string name="smartcard_prompt_dialog_message">Прикључите или држите паметну картицу на задњој страни телефона.</string>
-    <string name="smartcard_prompt_dialog_negative_button">Откажи</string>
+    <string name="edge_oneauth_legacy_smartcard_prompt_dialog_title">Припремите паметну картицу</string>
+    <string name="edge_oneauth_legacy_smartcard_prompt_dialog_message">Прикључите или држите паметну картицу на задњој страни телефона.</string>
+    <string name="edge_oneauth_legacy_smartcard_prompt_dialog_negative_button">Откажи</string>
 
-    <string name="smartcard_nfc_loading_dialog_title">Читање паметне картице</string>
-    <string name="smartcard_nfc_loading_dialog_message">Држите паметну картицу на месту.</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_loading_dialog_title">Читање паметне картице</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_loading_dialog_message">Држите паметну картицу на месту.</string>
 
-    <string name="smartcard_nfc_prompt_dialog_title">Припремите паметну картицу</string>
-    <string name="smartcard_nfc_prompt_dialog_message">Држите паметну картицу на задњој страни телефона.</string>
-    <string name="smartcard_nfc_prompt_dialog_negative_button">Откажи</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_prompt_dialog_title">Припремите паметну картицу</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_prompt_dialog_message">Држите паметну картицу на задњој страни телефона.</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_prompt_dialog_negative_button">Откажи</string>
 
-    <string name="smartcard_nfc_reminder_dialog_title">Укључите NFC у поставкама уређаја</string>
-    <string name="smartcard_nfc_reminder_dialog_message">Да бисте се пријавили помоћу NFC-а, укључите NFC у поставкама уређаја. Затим се поново пријавите.</string>
-    <string name="smartcard_nfc_reminder_dialog_positive_button">Разумем</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_reminder_dialog_title">Укључите NFC у поставкама уређаја</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_reminder_dialog_message">Да бисте се пријавили помоћу NFC-а, укључите NFC у поставкама уређаја. Затим се поново пријавите.</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_reminder_dialog_positive_button">Разумем</string>
 
-    <string name="smartcard_removal_prompt_dialog_title">Сада можете уклонити паметну картицу</string>
-    <string name="smartcard_removal_prompt_dialog_positive_button">Разумем</string>
+    <string name="edge_oneauth_legacy_smartcard_removal_prompt_dialog_title">Сада можете уклонити паметну картицу</string>
+    <string name="edge_oneauth_legacy_smartcard_removal_prompt_dialog_positive_button">Разумем</string>
 
     <!-- QR + PIN Auth Flow Strings-->
-    <string name="qr_code_rationale_header">Желите ли да дозволите приступ камери?</string>
-    <string name="qr_code_rationale_message">Затим можете да се пријавите помоћу QR кода.</string>
-    <string name="qr_code_rationale_allow">Дозволи</string>
-    <string name="qr_code_rationale_block">Блокирај</string>
+    <string name="edge_oneauth_legacy_qr_code_rationale_header">Желите ли да дозволите приступ камери?</string>
+    <string name="edge_oneauth_legacy_qr_code_rationale_message">Затим можете да се пријавите помоћу QR кода.</string>
+    <string name="edge_oneauth_legacy_qr_code_rationale_allow">Дозволи</string>
+    <string name="edge_oneauth_legacy_qr_code_rationale_block">Блокирај</string>
 </resources>

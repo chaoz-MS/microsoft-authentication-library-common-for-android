@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <color name="msal_loading" tools:override="true">#0078D4</color>
+    <color name="edge_oneauth_legacy_msal_loading" tools:override="true">#0078D4</color>
     <!-- colors for CBA dialogs -->
-    <color name="dialogTitleText">#0078D4</color>
-    <color name="dialogMessageText">#919191</color>
-    <color name="dialogMessageTextSecondChoice">#212121</color>
-    <color name="dialogRadioButton">#0078D4</color>
-    <color name="dialogButtonText">#0078D4</color>
-    <color name="dialogPinEditText">#0078D4</color>
-    <color name="dialogProgress">#616161</color>
-    <color name="certIssuerTitle">#212121</color>
-    <color name="dialogErrorText">#D92C2C</color>
-    <color name="com_microsoft_identity_common_white">#FFFFFF</color>
+    <color name="edge_oneauth_legacy_dialogTitleText">#0078D4</color>
+    <color name="edge_oneauth_legacy_dialogMessageText">#919191</color>
+    <color name="edge_oneauth_legacy_dialogMessageTextSecondChoice">#212121</color>
+    <color name="edge_oneauth_legacy_dialogRadioButton">#0078D4</color>
+    <color name="edge_oneauth_legacy_dialogButtonText">#0078D4</color>
+    <color name="edge_oneauth_legacy_dialogPinEditText">#0078D4</color>
+    <color name="edge_oneauth_legacy_dialogProgress">#616161</color>
+    <color name="edge_oneauth_legacy_certIssuerTitle">#212121</color>
+    <color name="edge_oneauth_legacy_dialogErrorText">#D92C2C</color>
+    <color name="edge_oneauth_legacy_com_microsoft_identity_common_white">#FFFFFF</color>
 </resources>

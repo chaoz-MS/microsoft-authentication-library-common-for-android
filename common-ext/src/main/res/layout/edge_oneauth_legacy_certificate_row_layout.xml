@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:minHeight="?android:attr/listPreferredItemHeight"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:gravity="center_vertical" >
+
+    <RadioButton
+        android:id="@+id/edge_oneauth_legacy_radioButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:clickable="false"
+        android:focusable="false"
+        android:layout_marginEnd="34dp"
+        android:layout_marginRight="34dp"
+        android:buttonTint="@color/edge_oneauth_legacy_dialogRadioButton"
+         />
+
+    <LinearLayout
+        android:orientation="vertical"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        >
+        <TextView
+            android:id="@+id/edge_oneauth_legacy_issuerText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="16sp"
+            android:textColor="@color/edge_oneauth_legacy_certIssuerTitle"
+            android:singleLine="true"
+            />
+        <TextView
+            android:id="@+id/edge_oneauth_legacy_subjectText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="@color/edge_oneauth_legacy_dialogMessageText"
+            android:singleLine="true"
+            />
+    </LinearLayout>
+
+</LinearLayout>

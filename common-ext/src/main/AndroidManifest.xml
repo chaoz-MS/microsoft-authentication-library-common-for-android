@@ -9,18 +9,18 @@
     <application>
         <!-- Because Android detects plugged in YubiKeys as keyboard config changes, configChanges must have `keyboardHidden` and `keyboard` -->
         <activity
-            android:name="com.microsoft.identity.common.internal.providers.oauth2.SilentAuthorizationActivity"
+            android:name="com.microsoft.identity.common.edgewebview.internal.providers.oauth2.SilentAuthorizationActivity"
             android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|keyboard"
-            android:theme="@style/TransparentActivityTheme"/>
+            android:theme="@style/edge_oneauth_legacy_TransparentActivityTheme"/>
 
         <activity
-            android:name="com.microsoft.identity.common.internal.providers.oauth2.CurrentTaskAuthorizationActivity"
+            android:name="com.microsoft.identity.common.edgewebview.internal.providers.oauth2.CurrentTaskAuthorizationActivity"
             android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|keyboard" />
 
         <!-- Activity that handles browser-switch operations.
              Launches the external browser and receives the result from SwitchBrowserRedirectActivity. -->
         <activity
-            android:name="com.microsoft.identity.common.internal.providers.oauth2.SwitchBrowserActivity"
+            android:name="com.microsoft.identity.common.edgewebview.internal.providers.oauth2.SwitchBrowserActivity"
             android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|keyboard"
             android:launchMode="singleTask"
             android:taskAffinity="" />
@@ -32,7 +32,7 @@
              from the browser (via FLAG_ACTIVITY_NEW_TASK), preventing it from landing in
              AuthorizationActivity's task where finishAffinity() would kill the WebView. -->
         <activity
-            android:name="com.microsoft.identity.common.internal.providers.oauth2.SwitchBrowserRedirectActivity"
+            android:name="com.microsoft.identity.common.edgewebview.internal.providers.oauth2.SwitchBrowserRedirectActivity"
             android:launchMode="singleTask"
             android:taskAffinity=""
             android:exported="false" />
@@ -43,12 +43,12 @@
              Transparent, no-history, not exported; finishes immediately. It is ONLY a navigation
              signal and never marks VID/auth as successful. -->
         <activity
-            android:name="com.microsoft.identity.common.internal.ui.OpenIdVcReturnActivity"
+            android:name="com.microsoft.identity.common.edgewebview.internal.ui.OpenIdVcReturnActivity"
             android:exported="false"
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:taskAffinity=""
-            android:theme="@style/OpenIdVcReturnActivityTheme" />
+            android:theme="@style/edge_oneauth_legacy_OpenIdVcReturnActivityTheme" />
     </application>
 
     <!-- Required for API Level 30 to make sure we can detect browsers and other apps we want to

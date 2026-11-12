@@ -1,72 +1,72 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
-    <string name="app_loading">Завантаження…</string>
+    <string name="edge_oneauth_legacy_app_loading">Завантаження…</string>
 
-    <string name="broker_processing">Посередник здійснює обробку</string>
-    <string name="http_auth_dialog_username">Ім’я користувача</string>
-    <string name="http_auth_dialog_password">Пароль</string>
-    <string name="http_auth_dialog_title">Введіть свої облікові дані</string>
-    <string name="http_auth_dialog_origin_host">Хост: %1$s</string>
-    <string name="http_auth_dialog_login">Увійти</string>
-    <string name="http_auth_dialog_cancel">Скасувати</string>
+    <string name="edge_oneauth_legacy_broker_processing">Посередник здійснює обробку</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_username">Ім’я користувача</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_password">Пароль</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_title">Введіть свої облікові дані</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_origin_host">Хост: %1$s</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_login">Увійти</string>
+    <string name="edge_oneauth_legacy_http_auth_dialog_cancel">Скасувати</string>
 
     <!-- strings for CBA dialogs and layouts -->
-    <string name="smartcard_cert_dialog_title">Виберіть сертифікат, щоб увійти</string>
-    <string name="smartcard_cert_dialog_positive_button">Продовжити</string>
-    <string name="smartcard_cert_dialog_negative_button">Скасувати</string>
+    <string name="edge_oneauth_legacy_smartcard_cert_dialog_title">Виберіть сертифікат, щоб увійти</string>
+    <string name="edge_oneauth_legacy_smartcard_cert_dialog_positive_button">Продовжити</string>
+    <string name="edge_oneauth_legacy_smartcard_cert_dialog_negative_button">Скасувати</string>
 
-    <string name="smartcard_pin_dialog_title">Розблокування смарт-картки</string>
-    <string name="smartcard_pin_dialog_message">Введіть PIN-код смарт-картки, щоб отримати доступ до сертифіката, і ввійдіть</string>
-    <string name="smartcard_pin_dialog_positive_button">Розблокувати</string>
-    <string name="smartcard_pin_dialog_negative_button">Скасувати</string>
-    <string name="smartcard_pin_dialog_error_message">Ви ввели неправильний PIN-код</string>
-    <string name="smartcard_pin_layout_edittext_hint">PIN-код</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_title">Розблокування смарт-картки</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_message">Введіть PIN-код смарт-картки, щоб отримати доступ до сертифіката, і ввійдіть</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_positive_button">Розблокувати</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_negative_button">Скасувати</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_dialog_error_message">Ви ввели неправильний PIN-код</string>
+    <string name="edge_oneauth_legacy_smartcard_pin_layout_edittext_hint">PIN-код</string>
 
-    <string name="smartcard_error_dialog_positive_button">OK</string>
+    <string name="edge_oneauth_legacy_smartcard_error_dialog_positive_button">OK</string>
 
-    <string name="smartcard_max_attempt_dialog_title">Спробуйте знову пізніше</string>
-    <string name="smartcard_max_attempt_dialog_message">Забагато невдалих спроб. Спробуйте ще раз пізніше.</string>
+    <string name="edge_oneauth_legacy_smartcard_max_attempt_dialog_title">Спробуйте знову пізніше</string>
+    <string name="edge_oneauth_legacy_smartcard_max_attempt_dialog_message">Забагато невдалих спроб. Спробуйте ще раз пізніше.</string>
 
-    <string name="smartcard_early_unplug_dialog_title">Повторити спробу</string>
-    <string name="smartcard_early_unplug_dialog_message">Пристрій читання смарт-карток вилучено. Вставте пристрій ще раз, перш ніж спробувати ввійти знову.</string>
+    <string name="edge_oneauth_legacy_smartcard_early_unplug_dialog_title">Повторити спробу</string>
+    <string name="edge_oneauth_legacy_smartcard_early_unplug_dialog_message">Пристрій читання смарт-карток вилучено. Вставте пристрій ще раз, перш ніж спробувати ввійти знову.</string>
 
-    <string name="smartcard_no_cert_dialog_title">Застосовні сертифікати не знайдено.</string>
-    <string name="smartcard_no_cert_dialog_message">Переконайтеся, що сертифікат належним чином підготовлено на пристрої читання смарт-карток.</string>
+    <string name="edge_oneauth_legacy_smartcard_no_cert_dialog_title">Застосовні сертифікати не знайдено.</string>
+    <string name="edge_oneauth_legacy_smartcard_no_cert_dialog_message">Переконайтеся, що сертифікат належним чином підготовлено на пристрої читання смарт-карток.</string>
 
-    <string name="smartcard_nfc_diff_connected_title">Одночасно можна використовувати лише одну смарт-картку</string>
-    <string name="smartcard_nfc_diff_connected_message">Скористайтеся смарт-карткою, за допомогою якої ви вперше ввійшли в систему.</string>
-    <string name="smartcard_nfc_diff_connected_positive_button">Зрозуміло</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_diff_connected_title">Одночасно можна використовувати лише одну смарт-картку</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_diff_connected_message">Скористайтеся смарт-карткою, за допомогою якої ви вперше ввійшли в систему.</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_diff_connected_positive_button">Зрозуміло</string>
 
-    <string name="smartcard_general_error_dialog_title">Спробуйте знову пізніше</string>
-    <string name="smartcard_general_error_dialog_message">Сталася неочікувана помилка. Спробуйте ще раз пізніше.</string>
+    <string name="edge_oneauth_legacy_smartcard_general_error_dialog_title">Спробуйте знову пізніше</string>
+    <string name="edge_oneauth_legacy_smartcard_general_error_dialog_message">Сталася неочікувана помилка. Спробуйте ще раз пізніше.</string>
 
-    <string name="user_choice_dialog_title">Як потрібно ввійти?</string>
-    <string name="user_choice_dialog_on_device_name">Сертифікат на цьому пристрої</string>
-    <string name="user_choice_dialog_smartcard_name">Фізична смарт-картка</string>
-    <string name="user_choice_dialog_positive_button">Продовжити</string>
-    <string name="user_choice_dialog_negative_button">Скасувати</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_title">Як потрібно ввійти?</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_on_device_name">Сертифікат на цьому пристрої</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_smartcard_name">Фізична смарт-картка</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_positive_button">Продовжити</string>
+    <string name="edge_oneauth_legacy_user_choice_dialog_negative_button">Скасувати</string>
 
-    <string name="smartcard_prompt_dialog_title">Підготовка смарт-картки</string>
-    <string name="smartcard_prompt_dialog_message">Вставте смарт-картку або прикладіть її до задньої панелі телефона.</string>
-    <string name="smartcard_prompt_dialog_negative_button">Скасувати</string>
+    <string name="edge_oneauth_legacy_smartcard_prompt_dialog_title">Підготовка смарт-картки</string>
+    <string name="edge_oneauth_legacy_smartcard_prompt_dialog_message">Вставте смарт-картку або прикладіть її до задньої панелі телефона.</string>
+    <string name="edge_oneauth_legacy_smartcard_prompt_dialog_negative_button">Скасувати</string>
 
-    <string name="smartcard_nfc_loading_dialog_title">Читання смарт-картки</string>
-    <string name="smartcard_nfc_loading_dialog_message">Тримайте смарт-картку на місці.</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_loading_dialog_title">Читання смарт-картки</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_loading_dialog_message">Тримайте смарт-картку на місці.</string>
 
-    <string name="smartcard_nfc_prompt_dialog_title">Підготовка смарт-картки</string>
-    <string name="smartcard_nfc_prompt_dialog_message">Прикладіть смарт-картку до задньої панелі телефона.</string>
-    <string name="smartcard_nfc_prompt_dialog_negative_button">Скасувати</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_prompt_dialog_title">Підготовка смарт-картки</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_prompt_dialog_message">Прикладіть смарт-картку до задньої панелі телефона.</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_prompt_dialog_negative_button">Скасувати</string>
 
-    <string name="smartcard_nfc_reminder_dialog_title">Увімкнення NFC в параметрах пристрою</string>
-    <string name="smartcard_nfc_reminder_dialog_message">Щоб увійти за допомогою NFC, увімкніть NFC в параметрах пристрою. Потім увійдіть ще раз.</string>
-    <string name="smartcard_nfc_reminder_dialog_positive_button">Зрозуміло</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_reminder_dialog_title">Увімкнення NFC в параметрах пристрою</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_reminder_dialog_message">Щоб увійти за допомогою NFC, увімкніть NFC в параметрах пристрою. Потім увійдіть ще раз.</string>
+    <string name="edge_oneauth_legacy_smartcard_nfc_reminder_dialog_positive_button">Зрозуміло</string>
 
-    <string name="smartcard_removal_prompt_dialog_title">Тепер ви можете видалити смарт-картку</string>
-    <string name="smartcard_removal_prompt_dialog_positive_button">Зрозуміло</string>
+    <string name="edge_oneauth_legacy_smartcard_removal_prompt_dialog_title">Тепер ви можете видалити смарт-картку</string>
+    <string name="edge_oneauth_legacy_smartcard_removal_prompt_dialog_positive_button">Зрозуміло</string>
 
     <!-- QR + PIN Auth Flow Strings-->
-    <string name="qr_code_rationale_header">Дозволити цій програмі доступ до камери?</string>
-    <string name="qr_code_rationale_message">Після цього ви зможете ввійти за допомогою QR-коду.</string>
-    <string name="qr_code_rationale_allow">Дозволити</string>
-    <string name="qr_code_rationale_block">Блокувати</string>
+    <string name="edge_oneauth_legacy_qr_code_rationale_header">Дозволити цій програмі доступ до камери?</string>
+    <string name="edge_oneauth_legacy_qr_code_rationale_message">Після цього ви зможете ввійти за допомогою QR-коду.</string>
+    <string name="edge_oneauth_legacy_qr_code_rationale_allow">Дозволити</string>
+    <string name="edge_oneauth_legacy_qr_code_rationale_block">Блокувати</string>
 </resources>

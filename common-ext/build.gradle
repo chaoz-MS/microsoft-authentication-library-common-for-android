@@ -119,16 +119,18 @@ if (project.hasProperty("distCommon4jVersion") && project.distCommon4jVersion !=
 boolean newBrokerDiscoveryEnabledFlag = project.hasProperty("newBrokerDiscoveryEnabledFlag")
 boolean trustDebugBrokerFlag = project.hasProperty("trustDebugBrokerFlag")
 boolean bypassRedirectUriCheck = project.hasProperty("bypassRedirectUriCheck")
+def legacyExtVersion = project.findProperty("distLegacyExtVersion") ?: "25.0.0-legacy-webview.1"
 
 android {
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        namespace 'com.microsoft.identity.common'
+        namespace 'com.microsoft.identity.common.edgewebview'
+        resourcePrefix 'edge_oneauth_legacy_'
         multiDexEnabled true
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode getAppVersionCode()
-        versionName getAppVersionName()
+        versionName legacyExtVersion
         project.archivesBaseName = "common-ext"
         project.version = android.defaultConfig.versionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -551,6 +553,16 @@ gradle.taskGraph.whenReady { graph ->
 }
 
 def dependenciesSizeInMb = project.hasProperty("dependenciesSizeMb") ? project.dependenciesSizeMb : "16"
+tasks.register("verifyLegacyExtAar", Exec) {
+    dependsOn(":common:assembleDistRelease", "assembleDistRelease")
+    doFirst {
+        commandLine "python3", file("verify_legacy_ext.py"),
+                "--common", project(":common").file(
+                        "build/outputs/aar/common-${project(':common').version}.aar"),
+                "--legacy", file("build/outputs/aar/common-ext-${project.version}.aar")
+    }
+}
+
 String configToCheck = project.hasProperty("dependenciesSizeCheckConfig") ? project.dependenciesSizeCheckConfig : "distReleaseRuntimeClasspath"
 tasks.register("dependenciesSizeCheck") {
     doLast() {
